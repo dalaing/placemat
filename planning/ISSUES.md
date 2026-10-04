@@ -17,6 +17,7 @@ Supporting reports from those runs are copied into [amber-validation/](amber-val
 | [P007](#p007) | platform | macOS measurement tools beyond sampling | to explore |
 | [P008](#p008) | platform | a Linux arm64 VM on the Mac, for Valgrind on the same CPU | to explore |
 | [P009](#p009) | tooling | compare hot-code ordering strategies on the system under test | idea (user, 2026-10-05) |
+| [P010](#p010) | validation | validate placemat on one or two small open-source projects that could benefit and can be coloured | idea (user, 2026-10-05) |
 
 ---
 
@@ -137,3 +138,18 @@ Different orderings of the hot set optimise different things; placemat could bui
 **Report per strategy:** static (text and pad bytes; profile-weighted count of 4 KB and 16 KB pages spanned by hot code; crossings before padding) and measured (layout-averaged speed against stock; spread and layout-sensitive cases; per-case winners and losers).
 
 **Expectation:** small differences on Amber/M2 (instruction-fetch stalls 6% of the maintainer's set; packing the hot code changed none of the front-end-heavy cases measurably; large L1 instruction cache), possibly larger on x86 (32 KB L1I), so the comparison is most interesting where P006 lands.
+
+### P010
+**Validate placemat on one or two small open-source projects** · validation · idea (user, 2026-10-05)
+
+Amber proved the methods, but it shaped them too. A second and third project, chosen to (a) plausibly benefit from a placemat analysis and (b) be colourable, would test whether the design is general. Colourable without patching the project is best: a pluggable allocator API lets the harness install placemat's colouring allocator from outside; a project on the system allocator can use the interposer (P004).
+
+Criteria: C or C++, small and quick to build (so variants are cheap), a built-in or easily scripted benchmark suite, large buffers or a hot interpreter loop, and either a pluggable allocator or plain `malloc`. Licence matters only for adapters: anything derived from a project's source stays with that project (as for Amber, AGPL-3.0).
+
+Candidates (allocator APIs to be confirmed before relying on them):
+- **zstd**: large window and table buffers used together (a natural data-axis case); a built-in benchmark (`zstd -b`); custom allocators through `ZSTD_customMem`. BSD/GPLv2.
+- **SQLite**: a single amalgamation file; `speedtest1`; a pluggable allocator (`sqlite3_config(SQLITE_CONFIG_MALLOC, ...)`); and the project tracks performance with Cachegrind instruction counts, so placemat's layout view can be set beside an established method. Public domain.
+- **ngn/k** (the K interpreter Amber derives from; checked out next to Amber): likely the same buddy-allocator structure and so the same structural L1 set conflicts; small and fast to build; a direct comparison with the Amber results. Needs a hook (no allocator API), kept with ngn/k (AGPL-3.0).
+- **Lua or QuickJS**: small interpreters with allocator callbacks (`lua_newstate(lua_Alloc)`; `JS_NewRuntime2` with `JSMallocFunctions`): mainly a code-axis and ordering-strategy (P009) test, most interesting on x86 (P006), where interpreter loops are more front-end bound.
+
+Suggested order: zstd (data axis through an allocator API, no patching), then SQLite (both axes, an established performance culture to compare with), with ngn/k as the closest relative to Amber. Each gets the lifecycle in DESIGN.md §3: a survey first, and only then fixes.
