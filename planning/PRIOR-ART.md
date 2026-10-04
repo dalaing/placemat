@@ -147,7 +147,7 @@ What they do:
 How placemat relates:
 - *Overlap (credit this):* placemat's interval is equation (4) applied at the **variant** level (a t interval over per-variant summaries), with the variant playing the role of K&J's compilation level. Their "turn an uncontrolled variable into a random one" is exactly the code and data perturbation. Their "or a controlled one" is exactly pinning (an order file and pads turn code placement into a controlled variable).
 - *Differences:*
-  - placemat's variants are **designed** (a low-discrepancy, Latin-hypercube-style joint sequence over pad and colour), not random rebuilds.
+  - placemat's variants are **designed** (a low-discrepancy, Latin-hypercube-style joint sequence over pad, colour and step), not random rebuilds.
   - It is a **paired** design (both versions timed in the same round, so per-round ratios block out drift) rather than two independent systems with Fieller's ratio interval.
   - It partitions the top level into **two factors** (code, data) plus a run covariate, and **tests** each with permutation tests; K&J estimate variance components but attribute nothing to causes.
   - It stops **adaptively** on interval width rather than dimensioning up front.
@@ -197,7 +197,7 @@ Confidence intervals over multiple VM invocations, with iterations within each, 
 Stated with care: "as far as this survey found, no existing tool…". Each ingredient has precedent; the claims are about the combination and two specific gaps.
 
 1. **Designed, joint code-and-data layout variants with per-case attribution.** Existing tools randomise (Stabilizer, lld `--shuffle-sections` / `--randomize-section-padding`, hyperfine, BenchmarkDotNet, DataMill) and then average or widen the distribution. None found builds a *designed* (low-discrepancy) set of variants over both code position (4 KB period, 64-byte phase) and data colour, and then attributes each case's spread to code, data or run with permutation tests and FDR control across cases.
-2. **Colouring large buffers in a custom allocator as an experimental factor.** Stabilizer explicitly cannot randomise custom allocators or large allocations. BenchmarkDotNet's approach relies on reallocating managed objects. placemat's hook protocol (`placemat_colour(size, spare_room)`, compiled into variant builds only) fills that stated gap.
+2. **Colouring large buffers in a custom allocator as an experimental factor.** Stabilizer explicitly cannot randomise custom allocators or large allocations. BenchmarkDotNet's approach relies on reallocating managed objects. placemat's hook protocol (`placemat_colour(block, size, spare_room)`, compiled into variant builds only) fills that stated gap.
 3. **Measure, then pin, then verify.** No tool found pins hot code with an order file, function alignment and an exact pad search against a profile-weighted boundary rule (no hot loop and no hot entry span across the boundary), *and* uses the same harness to show that code-layout spread has collapsed while real changes still show. Pinning for stability has precedents (.NET loop alignment, Go `func_align_32`, Stinner's PGO), but none uses order files or verifies the result statistically.
 4. **Apple Silicon / Mach-O support.** Stabilizer's documented targets are x86, x86_64 and PowerPC; lld's options are ELF only; ld64 has no shuffle or padding option. placemat's source-level pad function and ld64 order-file pinning work on macOS arm64. *Keep this claim modest:* it is a platform gap, not a method.
 
