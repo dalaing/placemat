@@ -23,7 +23,7 @@ Supporting reports from those runs are copied into [amber-validation/](amber-val
 ### P001
 **placemat itself: shape, licence, steps** · design · in progress (user, 2026-10-05) · was Amber A277
 
-Name and licence: `placemat`, MIT, © Dave Laing (repository dalaing/placemat). Only generic code comes here; anything that embeds a project's own source (such as the Amber allocator patch, which contains Amber's `src/m.c`) stays with that project under its licence and calls placemat.
+Name and licence: `placemat`, MIT, © Dave Laing (repository dalaing/placemat). Only generic code comes here; anything that embeds a project's own source (such as the Amber allocator patch, which contains Amber's `src/m.c`) stays with that project under its licence and calls placemat. **Amber is AGPL-3.0:** nothing derived from Amber's source may enter placemat. That rules out the colouring patches and their generator (kept in the Amber fork's `pbt/patches/`) and the data-hook text in `pbt/layouts.py` (`HOOK_DECL`, `HOOK_FUNS`, `HOOK_EDITS`, which quote Amber's allocator); placemat's hook is written fresh against `placemat.h`. The rest of `pbt/` is our own code and can be MIT-licensed here.
 
 Shape:
 1. **Core, language-agnostic:** a runner (alternating base and branch, rounds, anchor variants re-timed per batch, adaptive stopping on interval width), the design (code pads and data colours from one low-discrepancy sequence), statistics (t intervals over variants, permutation tests attributing spread to code, data or run, Benjamini-Hochberg across cases), reports (Markdown, JSON). Benchmark protocol: a command printing name/value lines, plus a repetition-series convention; adapters for Google Benchmark JSON and for Amber/K `out[name;reps;f]` scripts.

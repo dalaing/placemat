@@ -6,7 +6,7 @@ Draft, 2026-10-05. Companion documents: [ISSUES.md](ISSUES.md) (work items P001-
 
 placemat answers one question about a change to a compiled program: **is this timing difference caused by the change, or by where the code and data happened to land?**
 
-A change to one function moves every function linked after it, and can move the program's data. On real machines that alone can make an unrelated benchmark 10-30% faster or slower, or twice as slow (Amber on an Apple M2: a dict amend 2× slower in one layout in 60; a grade +13% from one 64-byte loop starting to cross a 4 KB boundary; window kernels switching between two speeds from run to run because every large buffer sat at the same offset mod 16 KB). A single timing of each build cannot tell these from real effects. This is *measurement bias* (Mytkowicz et al., 2009).
+A change to one function moves every function linked after it. Moving code alone can change an unrelated benchmark by 10-30%, or double it. On Amber (Apple M2), one dict amend ran 2× slower in about one layout in 60; date grading ran 10% slower in every build where two of its loops crossed a 4 KB boundary; and window kernels switched speeds between runs because every large buffer sat at the same offset mod 16 KB. A single timing of each build cannot tell these from real effects. This is *measurement bias* (Mytkowicz et al., 2009).
 
 placemat does three things:
 1. **Measure:** time both builds across designed layout variants, so the result no longer depends on one layout, and attribute each case's spread to code placement, data placement, or run-to-run noise.
@@ -26,11 +26,13 @@ From Kalibera & Jones (ISMM 2013) and Mytkowicz et al. (2009); see PRIOR-ART.md 
 | **execution** | one process run of one build in a round |
 | **round** | one pass that runs every arm's builds once, in random order: a *block* in the design |
 | **arm** | one version being compared: the base and one or more changes |
-| **layout variant** | one build of an arm with a chosen code pad and data colour: the *build level*, the highest level of repetition |
+| **pad** | one code-layout build of an arm (a chosen code pad): the *build level*, the highest level of repetition, and the unit of the interval |
+| **layout variant** | one (pad, colour) combination: a pad's build timed at one data colour sequence; each pad has two, colour 0 and its designed colour |
 | **stock** | the build as the project ships it: no pad, no colour |
 | **code axis / data axis / run** | what a variant varies: where code sits; where large buffers sit; what differs between executions (ASLR, the machine) |
 | **layout spread** | how much a case's time varies across variants of one build (a variance component at the build level) |
-| **layout-sensitive case** | a case whose spread over the code (or data) axis exceeds the threshold and survives the permutation test with false-discovery-rate control |
+| **layout-sensitive case** | a case whose spread over the code (or data) axis exceeds the threshold, with a permutation p ≤ 0.01 that also survives the false-discovery-rate correction across cases |
+| **hot entry span** | from a hot function's entry to its last sampled offset under 1 KB that holds at least 10% of the function's samples |
 | **pinned** | built so the hot code's addresses do not depend on unrelated code |
 | **coloured** | built so large allocations are spread over the cache's set stride |
 | **4 KB boundary crossing** | a hot loop (or a hot function's entry-to-loop span) straddling a 4 KB address boundary (not "page crossing": macOS arm64 pages are 16 KB, and the mechanism is unexplained) |
@@ -58,7 +60,7 @@ The expensive measurement is not something a project should run on every change 
 
 *Pin* (§6.3): profile the benchmark set, choose the hot set (~95% of in-binary samples), write the order file, align functions, compute pads so no hot loop or hot entry span crosses a boundary, verify after linking. *Colour* (§7): build the project's allocator with colouring of large blocks (a real change to the project), or, for measurement only, use placemat's interposer or hook.
 
-*Verify:* re-run the survey's comparisons on the fixed builds. The code spread should collapse for the pinned cases while real changes still show (on Amber: 9-21 layout-sensitive cases → 0; a false +13.5% → +0.9%, with the change's real +3-5% costs intact). The data spread and the run switching should collapse once coloured. If they don't, the survey's culprits say where to look.
+*Verify:* re-run the survey's comparisons on the fixed builds. The code spread should collapse for the pinned cases while real changes still show (on Amber: 9-21 layout-sensitive cases → 0; a false +13.5% → +0.9%, with the change's real costs, about +3-6%, intact). The data spread and the run switching should collapse once coloured. If they don't, the survey's culprits say where to look.
 
 A project may stop after measuring, or take only one fix. placemat records which fixes are in place, because that decides what the steady state may skip.
 
@@ -67,24 +69,29 @@ A project may stop after measuring, or take only one fix. placemat records which
 *When:* every change worth timing (a pull request, a candidate fix).
 
 *What:* placemat drops what the fixes have made unnecessary:
-- **Only affected cases.** In a pinned build, unchanged hot functions do not move. placemat diffs the two binaries' machine code per function and maps cases to functions through the stored profile; a case whose hot functions are byte-identical and unmoved is skipped or spot-checked. On a typical change, 200 cases become 10-30.
+- **Only affected cases.** In a pinned build, unchanged hot functions do not move. placemat diffs the two binaries' machine code per function (ignoring call and branch targets, which change when unpinned callees move) and selects a case if any function it can reach changed, using the call graph, not only the stored hot set; it also takes a short fresh profile of the change's build, so a function the change made hot is caught. Changes to data or read-only data with identical code, and changes to the allocation sequence, select every case that touches them, or all cases when that cannot be told. A random sample of skipped cases is spot-checked every time. On a typical change we expect 200 cases to become 10-30 (an estimate; P005).
 - **Only the axes still open.** With colouring built into both arms, the data axis is skipped. A change that leaves the binary unchanged (scripts in the project's own language, docs, tests) skips the code axis.
 - **Few variants.** Pinned and coloured builds have small spread, so adaptive stopping starts at 4 variants and usually stops early.
 - **One base for many arms.** Several candidates are timed against one base in the same rounds.
 
+*What the steady state's interval means:* with pinned code, the code axis moves only the unpinned (cold) code, so the interval covers that pinned layout, not all layouts. Reports say so; they never call the result layout-independent.
+
 *Output:* the change's effect per affected case with an interval, the stock-layout result next to it, and a short list of anything that needs the full treatment (a case flagged layout-sensitive despite pinning, a hot function that moved). *Cost:* minutes (an estimate: 10-20 min for a typical change on Amber; to be measured, P005).
 
-Without fixes, the steady state is the survey restricted to the cases the normal paired pass flags: slower, but still far cheaper than everything.
+Without fixes, the steady state is a normal paired run of all cases at the stock layout (the *screening pass*), then the full design on the cases it flags. Placement can hide a real change in the screening pass, so audits (§3.4) re-run everything.
 
 ### 3.4 Audit: the long version, now and then
 
 Fixes cover what the survey saw. They decay, and they can hide new problems. An audit is the survey again, on the fixed builds and on stock builds, run periodically and whenever a drift detector fires. Things it exists to catch:
 
 - **Hot-set drift:** the program's time moves into functions that are not in the order file (new features, new benchmarks, a refactor that renamed or split a hot function). Pinning then covers less of what matters, silently.
-- **Pad decay:** edits inside the pinned region shift it until the next pad; pads computed for an old build stop satisfying the boundary rule.
+- **Stale profile data:** pads are regenerated on every build (§6.3), but the hot spans and hot loops they protect come from the stored profile; when a hot function's code changes, its sampled offsets go stale and the pads protect the wrong spans.
+- **What the steady state skipped:** cases its selection judged unaffected, and real changes the screening pass missed because placement hid them.
 - **New classes of data problem:** a new allocation path that skips colouring; buffers below the colouring threshold that now matter; or a placement assumption nobody knew about. Our own example: placemat's first data axis coloured in 16-byte steps; that broke Amber's 32-byte alignment assumption (its allocator guarantees 64) and produced a false 25-35% "data effect" on two kernels. Only a wider look found it, and only knowing the project's alignment guarantee explained it. Audits should vary what the fixes hold fixed, within the project's guarantees, precisely to find such things.
 - **Platform change:** a new compiler or linker version (flags that silently stop working: Apple's linker ignores unknown `-mllvm` options), a new CPU with different boundaries or cache geometry.
 - **The fixes' own cost:** pads and colouring take space and a few instructions; an audit re-times stock against fixed builds so their cost and benefit stay known.
+
+An audit on pinned builds varies data through placemat's interposer, or through the project's own colouring when it has one, not through a hook added to the allocator: an added hook grows the allocator and moves the pinned code (Amber's did). And in a hooked build, colour 0 is not the shipped code, so every audit also times the true stock build (§5.3).
 
 *Cheap drift detectors,* run with the steady state, decide when an audit is due:
 1. **Hot-set coverage:** the stored profile's share of samples inside the order file, recomputed from a short profile of the current build; below a threshold (e.g. 90%), audit and regenerate.
@@ -116,23 +123,25 @@ placemat (Python, standard library only)
 
 The project supplies a small configuration file (`placemat.toml`): how to build with extra flags, how to run the benchmarks, the case list, the platform's boundaries and cache geometry (with defaults), the project's alignment guarantee, the colouring threshold, and which fixes are in place.
 
-Implementation stays standard-library Python, as the Amber tooling is: no dependencies to install on a CI runner. Native pieces are small C files compiled on demand: the pad function source, the interposer, the hook header.
+Implementation stays standard-library Python, as the Amber tooling is: no dependencies to install on a CI runner. Python 3.11 or later, for `tomllib`. Native pieces are small C files compiled on demand: the pad function source, the interposer, the hook header.
 
 ## 5. The experiment design
 
 ### 5.1 Levels and pairing
 
-Each round runs every arm's current variant once, in random order (randomised multiple interleaved trials, Abedi & Brecht 2017); per-round ratios against the base are paired contrasts, which block out machine drift. Within an execution a case is timed at its iteration count; for cases under ~1 ms placemat times a geometric series of iteration counts and takes the regression slope (Criterion-style), falling back to the full-count time if the fit fails (a negative slope once lost a whole run). Variant counts and rounds per variant follow Kalibera & Jones's dimensioning formula once a first batch has estimated the variance components (P005).
+Each round runs every arm's current variant once, in random order (randomised multiple interleaved trials, Abedi & Brecht 2017); per-round ratios against the base are paired contrasts, which block out machine drift. Within an execution a case is timed at its iteration count; for cases under ~1 ms placemat times a geometric series of iteration counts and takes the regression slope (Criterion-style), falling back to the full-count time if the fit fails (a negative slope once lost a whole run). Rounds per pad (the levels below the top) follow Kalibera & Jones's dimensioning formula once a first batch has estimated the variance components (P005); the number of pads, the top level, is set by the precision wanted (adaptive stopping, §5.5).
 
 ### 5.2 Code axis
 
-- **Source pads** (portable): an unused, link-surviving function of P bytes placed before the code under study (on Amber, at the top of the first object file). Sizes come from a golden-ratio sequence, P_j = 64·⌊64·frac(u + j/φ)⌋ + 4·((7j + v) mod 16): spread over the 4 KB period and the 64-byte phase at once (12 pads: largest gap 620 B against 341 for even spacing; 12 of 16 phases mod 64; all 4 mod 16). The R2 sequence was rejected (its first coordinate is near 3/4, so pads cluster).
+- **Source pads** (portable): an unused function of P bytes, kept by `__attribute__((used))`, placed before the code under study. On Amber it sits at the top of the first source file in link order; under LTO, "linked first" alone does not fix where a function lands, so placement is always verified from the linked binary's symbols (§8.2). Sizes come from a golden-ratio sequence, P_j = 64·⌊64·frac(u + j/φ)⌋ + 4·((7j + v) mod 16), with seeds u, v ∈ [0, 1) and an integer offset chosen per run and recorded: spread over the 4 KB period and the 64-byte phase at once (12 pads: largest gap 620 B against 341 for even spacing; 12 of 16 phases mod 64; all 4 mod 16). The R2 sequence was rejected (its first coordinate is near 3/4, so pads cluster).
 - **lld** (Linux): `--randomize-section-padding` (lld 20) as the code axis, `.text` only so code and data stay separable; `--shuffle-sections` as a coarser alternative. Record the resulting addresses either way.
 - **Boundaries** are platform parameters: 4 KB on Apple M2 (measured); 32/64-byte fetch windows and 4 KB on x86 (to be measured, P006).
 
 ### 5.3 Data axis
 
-Colours are offsets applied to large allocations (default ≥64 KB), in whole cache lines (64 B by default; never finer than the project's alignment guarantee), spread over the L1 set stride (16 KB on M2; 4 KB on typical x86) by a √2 Kronecker sequence, C_j = 64·⌊(stride/64)·frac(w + j√2)⌋. Each pad is timed twice: at colour 0 (the stock placement, what users get) and at its colour, so code effects are measured at the real placement and each pair isolates data. K variants cost K/2 builds per arm.
+Colouring must vary the *relative* offsets of buffers used together, so a constant offset per variant is useless: it moves every block equally. A variant's colour c_j is therefore a *step*: the k-th large allocation of the execution (default ≥64 KB) is offset by (c_j·(k+1)) mod stride, in whole cache lines (64 B by default; never finer than the project's alignment guarantee), where stride is the L1 set stride (16 KB on M2; 4 KB on typical x86). The steps come from a √2 Kronecker sequence, c_j = 64·⌊(stride/64)·frac(w + j√2)⌋, with seed w ∈ [0, 1) recorded per run. Colour 0 is the stock placement. Each pad is timed at colour 0 and at its own step, so code effects are measured at the real placement and each pair isolates data; K variants cost K/2 builds per arm.
+
+A hooked build's colour 0 is not the shipped binary (the hook adds code), so the unhooked stock build is always timed as one more arm.
 
 ### 5.4 Targeted variants
 
@@ -140,12 +149,12 @@ Rare bad layouts (a 64-byte loop crosses 4 KB in ~1.5% of positions) are missed 
 
 ### 5.5 Statistics and verdicts
 
-- **Effect:** per variant, the median of paired ratios; the geometric mean over variants; a t interval over variants (Kalibera & Jones's equation 4 at the build level). Reported both over all variants and over the stock-data half.
-- **Attribution:** code (permutation of variant labels within a batch's rounds, on trimmed means), data (sign-flip permutation on the colour contrasts), run (the ASLR region base or other per-execution covariates, by permutation; when significant, executions are adjusted per variant).
-- **Flags:** Benjamini-Hochberg across cases (q = 0.05) separately per axis, plus p ≤ 0.01 and an effect over the project's threshold (BH alone produced false flags from one p ≈ 0.03 event).
-- **Adaptive stopping:** add variants in batches until the interval's half-width is under the target or a cap; stop on width only, never on significance; re-time an anchor variant each batch to catch drift (it reached 5% between batches on Amber).
+- **Effect:** per layout variant, the median of paired ratios over its rounds; per pad, the geometric mean of its two variants; the effect is the geometric mean over pads with a t interval over pads, n_pads − 1 degrees of freedom (Kalibera & Jones's equation 4 at the build level). The two colours of a pad share a code layout, so pads, not variants, are the independent units. Also reported over the stock-data variants alone.
+- **Attribution:** code (permutation of pad labels within a batch's rounds, on trimmed means); data (sign-flip permutation over pads of each pad's colour contrast; with n pads the smallest two-sided p is 2^(1−n), 0.0078 at 8 pads, so a data flag needs at least 8 pads, and coarse p-values tie); run (the ASLR region base or other per-execution covariates, by permutation; when significant, each variant's executions are post-stratified by the covariate before its median is taken, rather than adjusted with one pooled model, which once spread its error across variants and made false −5% changes).
+- **Flags:** Benjamini-Hochberg across cases (q = 0.05) separately per axis, plus p ≤ 0.01 and an effect over the project's threshold (default 3%; 10% for cases under 5 ms). BH alone is not enough with coarse permutation p-values: one shared disturbance gave five cases the same tied p ≈ 0.03, and BH rejected all five.
+- **Adaptive stopping:** start with 8 pads, add 4 at a time until the interval's half-width is under the target (default 1%) or a cap (default 24); stop on width only, never on significance. Each later batch re-times pad 0 as an anchor; the anchor's change between batches estimates drift, which is divided out of that batch's ratios (it reached 5% between batches on Amber).
 - **Verdicts:** *change* (interval excludes zero and the effect exceeds the threshold), *placement* (the stock-layout result differs but the layout-averaged one does not, or a version is layout-sensitive), *data-dependent* (the stock-data and coloured halves differ), *noise*.
-- **Honesty:** coverage under adaptive stopping is approximate (Amber's null run: 6.7% of intervals missed zero against 5% nominal); no minimum-time estimator (under perturbation it would pick the luckiest layout); exchangeability within a batch is an assumption, stated in reports.
+- **Honesty:** coverage under adaptive stopping is only approximately nominal (Amber's null run: 7 of 104 intervals missed zero, 6.7% against 5%, consistent with that); no minimum-time estimator (under perturbation it would pick the luckiest layout); exchangeability of pads within a batch is an assumption, stated in reports; and main against main is not a perfect null when base and branch run from different directories.
 
 ## 6. Code: measurement and pinning
 
@@ -167,11 +176,15 @@ For a layout-sensitive case: the hot loops whose crossing state differs between 
 6. **Verify:** symbols present and in order (`nm`; never trust the linker's silence: a build script may discard its warnings), no crossings, then time (§3.2).
 7. **Regenerate** pads on every build (they belong to the build, not the source); the steady state's placement check does this.
 
+### 6.4 Comparing ordering strategies (P009)
+
+The order in step 3 is a choice. placemat can build several and compare them on the project: by hotness, by density, Pettis-Hansen, C3/hfsort, hfsort+ and CDSort, per-benchmark clusters, and random order as a control. Each pinned layout freezes its own luck (on Amber each pinned build had a few cases ±5-10% off from where that layout put them), so a strategy is never judged from one build: the whole ordered region is shifted through designed offsets (a pad in front of it over the 4 KB period and the 64-byte phase), optionally with several equally good pad solutions, and averaged like any comparison. The report gives, per strategy, static measures (text and pad bytes; profile-weighted 4 KB and 16 KB pages spanned by hot code; crossings before padding) and measured ones (layout-averaged speed against stock; spread; per-case winners and losers).
+
 ## 7. Data: colouring for measurement and for real
 
 Two ways to colour, depending on who owns the allocator:
 
-- **Interposer** (projects on the system allocator): a small shared library loaded with `DYLD_INSERT_LIBRARIES` / `LD_PRELOAD` that offsets allocations at or above the threshold by the variant's colour (over-allocating by up to one set stride and recording the original pointer for `free`/`realloc`), keeping the platform's alignment guarantee.
+- **Interposer** (projects on the system allocator): a small shared library loaded with `DYLD_INSERT_LIBRARIES` / `LD_PRELOAD` that offsets allocations at or above the threshold. To keep size class and wrapper overhead the same at every colour, it over-allocates by one set stride and adds its header in *every* variant, colour 0 included; the true stock build (no interposer) is timed as one more arm. Open details (§11): a side table or header for the original pointer; `free`/`realloc` of pointers it never returned (allocated before it loaded, or inside the C library); `realloc` that moves a block to a different colour (copy, and recompute); `malloc_size`/`malloc_usable_size` on an interior pointer; requested alignments above the colour step (`posix_memalign`, `aligned_alloc`); and macOS System Integrity Protection, which strips `DYLD_INSERT_LIBRARIES` from protected binaries.
 - **Hook header** (custom allocators): interposing `mmap` does not help an allocator that aligns blocks internally (Amber's buddy allocator put every payload ≥64 KB at the same offset mod 16 KB however its region moved). The project includes `placemat.h` under a flag (`-DPLACEMAT_HOOK`); without the flag the binary is unchanged.
 
 ```c
@@ -187,25 +200,23 @@ Rules the allocator side must keep (learnt on Amber): take the colour from exist
 
 The same hook doubles as the shape of a project's *real* fix: if a project adopts colouring (as Amber may), its colour choice can defer to `placemat_colour()` under the flag, so placemat can still vary it. Valgrind client requests can sit under the same flag (P004, P006).
 
-Address logging answers the survey's first data question: are large buffers placed the same in every execution (then code padding moves data too, and the axes are confounded unless the data axis is controlled), or randomly (then data placement is run noise, which colouring turns into a controlled factor)?
+Address logging answers the survey's first data question. Large buffers can sit at fixed offsets (a hidden bias: every run gets the same placement, good or bad; Amber's sat at the same offset mod 16 KB in every execution and every code pad), move with ASLR (run noise), or move with code pads (then the two axes are confounded unless data is controlled).
 
 ## 8. Interfaces
 
 ### 8.1 Benchmark protocol
 
-A benchmark command prints one line per case: `name value [unit]`, value in time units for a stated number of iterations. placemat passes, per execution:
+A benchmark command prints one line per case and iteration count: `name value iterations [unit]`. placemat passes, per execution:
 - `PLACEMAT_CASES`: the cases to run (others may be skipped);
-- `PLACEMAT_ITERS_SCALE`: a factor applied to each case's iteration count, for the regression series.
+- `PLACEMAT_SERIES`: for the regression series, a list of scale factors per case (e.g. `msum100=0.125,0.25,0.5,1`); the harness runs each listed case at each scale within the same execution, after a discarded warm-up, so scale is not confounded with rounds or ASLR. Cases not listed run once at their own count.
 Adapters translate existing formats: Google Benchmark JSON, hyperfine JSON, and K scripts of `out["name";reps;{...}]` lines (Amber's). A harness that cannot skip cases or scale iterations still works, at higher cost.
 
 ### 8.2 Build protocol
 
-placemat runs the project's build command with:
-- `PLACEMAT_CFLAGS`, `PLACEMAT_LDFLAGS`: appended flags (alignment, order file, the hook define);
-- `PLACEMAT_PAD_SOURCE`: a generated C file holding the pad function (and, when pinning, the pad functions named in the order file), to be compiled and linked first;
-- `PLACEMAT_ORDER_FILE`: the order file, when pinning;
-- an output directory; the build must leave the binary (or binaries) at a configured path.
-Builds are cached by source tree, flags and pad; a variant usually needs one small object recompiled and a relink.
+Two ways in, because build systems differ:
+1. **A compiler wrapper** (the default): placemat sets `CC`/`CXX` (and the linker driver) to `placemat-cc`, which adds the variant's flags, compiles the generated pad source into the link, and passes the order file. This works with make, CMake, Meson and most others without changes, as long as the build honours `CC`. For build systems that pin their own compiler (cargo, Bazel), a project adapter is needed.
+2. **Environment variables** for build scripts that read them: `PLACEMAT_CFLAGS`, `PLACEMAT_LDFLAGS`, `PLACEMAT_PAD_SOURCE` (a generated C file holding the pad function, and, when pinning, the pad functions named in the order file), `PLACEMAT_ORDER_FILE`, and `PLACEMAT_OUT` (the output directory).
+Either way, the build must leave the binary at a configured path, and placemat **verifies** every variant after linking: the pad function is present (it can be dead-stripped despite `used`, P006), it sits where intended, and the ordered functions are in order. Builds are cached by source tree, flags and pad; a variant usually needs one small object recompiled and a relink.
 
 ### 8.3 Outputs
 
@@ -231,9 +242,9 @@ Measurement tools by platform (P006, P007): Valgrind (Cachegrind, Callgrind, DHA
 | data hook | the variant patch in `layouts.py`'s `hook()`, rewritten against `placemat.h` |
 | bench adapter (K) | `out[]` parsing in `layouts.py` |
 
-What stays with Amber: its configuration file, its allocator patch (it embeds Amber's `src/m.c`; Amber's licence), its benchmark scripts, and its machine lock (placemat should take a lock command as configuration rather than ship Amber's).
+What stays with Amber: its configuration file, its allocator patches and their generator (they embed Amber's `src/m.c`; Amber is AGPL-3.0, so nothing derived from its source may enter MIT-licensed placemat; they are kept in the Amber fork's `pbt/patches/`), its benchmark scripts, and its machine lock (placemat should take a lock command as configuration rather than ship Amber's). The data-hook part of `layouts.py` (`HOOK_DECL`, `HOOK_FUNS`, `HOOK_EDITS`) quotes Amber source and is **not** extracted: placemat's hook is written fresh against `placemat.h`, and Amber's adapter (in the fork) maps it onto Amber's allocator.
 
-**Regression test:** the Amber validations, re-run through placemat, must give the same verdicts: (a) main against main: no changes; (b) the branch with a placement slowdown: placement, not change; (c) the window kernels: data-dependent, with the prototype's gain a change; (d) the pinned build against main: code spread collapses; (e) the coloured build: two-speed switching gone. Reference results: [amber-validation/](amber-validation/).
+**Regression test:** the Amber validations, re-run through placemat, must give the same verdicts: (a) main against main: no changes; (b) the branch with a placement slowdown: placement, not change; (c) the window kernels: data-dependent, with the prototype's gain a change; (d) the pinned build against main: code spread collapses; (e) the coloured build: two-speed switching gone. Reference results and inputs: [amber-validation/](amber-validation/) (reports, the case list, order and pad files, the profile, the targeted pads for (d), the K kernels, and the raw timings in `raw.tar.xz`). Validation (d) still needs the targeted pads chosen by hand; automating that (§5.4) is part of the extraction.
 
 ## 11. Open questions
 
@@ -247,4 +258,4 @@ What stays with Amber: its configuration file, its allocator patch (it embeds Am
 
 ## 12. Claims and credits
 
-placemat should claim only the combination and two gaps (PRIOR-ART.md §(a)): designed joint code-and-data variants with per-case attribution and FDR control; colouring a custom allocator's large buffers as an experimental factor; the measure-pin-verify workflow; and (modestly) Apple Silicon support. It must not claim to be first at layout randomisation, multi-level designs, paired or interleaved runs, adaptive stopping, colouring, or order files, and must not claim a layout-independent speed. The README credits Mytkowicz et al. 2009, Curtsinger & Berger 2013, Kalibera & Jones 2013, Georges et al. 2007, Abedi & Brecht 2017, Laaber et al. 2020, Bonwick 1994, Kessler & Hill 1992, Afek, Dice & Morrison 2011, jemalloc, Rivera & Tseng 1998, Pettis & Hansen 1990, Ottoni & Maher 2017, and Benjamini & Hochberg 1995, and builds on lld's padding and shuffling options.
+As far as the survey found (PRIOR-ART.md §(a)), placemat can claim four things, each a combination or a gap rather than a new ingredient: designed joint code-and-data variants with per-case attribution and FDR control; colouring a custom allocator's large buffers as an experimental factor; the measure-pin-verify workflow; and (modestly) Apple Silicon support. It must not claim to be first at layout randomisation, multi-level designs, paired or interleaved runs, adaptive stopping, colouring, or order files, and must not claim a layout-independent speed. The README credits Mytkowicz et al. 2009, Curtsinger & Berger 2013, Kalibera & Jones 2013 (with Kalibera, Bulej & Tůma 2005 and Kalibera & Tůma 2006), Georges et al. 2007, Abedi & Brecht 2017, Laaber et al. 2020, Bonwick 1994, Kessler & Hill 1992, Afek, Dice & Morrison 2011, jemalloc, Rivera & Tseng 1998, Pettis & Hansen 1990, Ottoni & Maher 2017, Benjamini & Hochberg 1995, and the .NET 6 loop-alignment and Intel JCC-erratum guidance on boundary rules, and builds on lld's padding and shuffling options.

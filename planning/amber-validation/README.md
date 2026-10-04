@@ -9,3 +9,10 @@ Reports from the runs that built and validated placemat's methods on the Amber K
 | joint-stage-summary.md | the joint code-and-data layout stage and its four validations (P002) |
 | colouring-report.md | Amber's colouring allocator (P004's lessons) |
 | hot-kernel-rerun.md | the hot-kernel prototypes re-measured on pinned, coloured builds |
+
+## Inputs, tools and raw data (copied 2026-10-05, so the regression test does not depend on the scratch area)
+
+- `inputs/`: the case list (`cases.txt`, plus `cases-hot2.txt` with three scout cases the stage had missed), the order file (`hot.order`), its selection and coverage (`sel.json`), the re-attributed profile (`prof2.json`), hot entry spans (`hotspans.json`: main's offsets), hottest small loops (`hotloops64.json`), the pad files per build (`pads/`), the prototype order files (`orders/`), the K benchmark kernels (`k/`: win, grp, fnd, red and the equality checks), and the targeted pads used in validation (d) (`targeted-pads.txt`).
+- `tools/`: the prototype scripts as they ran (order-file tools; colouring-run helpers prefixed `col-`; `loops4k.py`, `samefn.py`). Reference only: the code to extract is in the Amber fork's `pbt/`.
+- `raw.tar.xz`: raw timings and stage outputs of the joint-stage, order-file, colouring and re-run experiments.
+- Not here: the colouring patch itself and its generator. They embed Amber's `src/m.c`, and Amber is AGPL-3.0, so they stay in the Amber fork (`pbt/patches/`).
