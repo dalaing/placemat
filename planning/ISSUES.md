@@ -16,6 +16,7 @@ Supporting reports from those runs are copied into [amber-validation/](amber-val
 | [P006](#p006) | platform | Linux support: ELF analysis, linker options, the stage on shared CI runners, Valgrind | to do |
 | [P007](#p007) | platform | macOS measurement tools beyond sampling | to explore |
 | [P008](#p008) | platform | a Linux arm64 VM on the Mac, for Valgrind on the same CPU | to explore |
+| [P009](#p009) | tooling | compare hot-code ordering strategies on the system under test | idea (user, 2026-10-05) |
 
 ---
 
@@ -123,3 +124,14 @@ No Valgrind on macOS arm64 (and, as far as we know, no DynamoRIO or Pin). Option
 **A Linux arm64 VM on the Mac** · platform · to explore · from Amber A274 (point 1)
 
 Apple's Virtualization framework (via UTM, Lima, OrbStack or Docker) runs Linux arm64 lightly: Valgrind on the same CPU (P006 point 4), and a cheap first step toward P006's Linux questions (arm64 rather than x86, but the same linkers). Caveats: a different toolchain and ABI (e.g. Linux's initial-exec thread-local storage is nearly free where macOS's is not); timing inside a VM is less trustworthy than bare metal, but instruction counts and allocation traffic are fine.
+
+### P009
+**Compare hot-code ordering strategies on the system under test** · tooling · idea (user, 2026-10-05)
+
+Different orderings of the hot set optimise different things; placemat could build each and present how they compare on the project being benchmarked. Candidates (most are options of BOLT's function reordering; names to be checked against BOLT's documentation): by hotness (execution count), by density (samples per byte), Pettis-Hansen (greedy merging along the heaviest call edges, 1990), C3/hfsort (each function behind its heaviest caller, Ottoni & Maher 2017), hfsort+ and CDSort (refinements), balanced partitioning (lld; aimed at startup and compression), per-benchmark clusters, and **random order as a control**. The pad rule (P003) applies after any of them.
+
+**The trap:** each pinned layout freezes its own luck (on Amber, each pinned build had a few cases ±5-10% off from where that layout happened to put them), so one build per strategy compares lucky draws. Measure each strategy averaged over layout: shift the whole ordered region through designed offsets (a pad in front of it, over the 4 KB period and the 64-byte phase) and, optionally, several equally good pad solutions; random order measured the same way is the baseline.
+
+**Report per strategy:** static (text and pad bytes; profile-weighted count of 4 KB and 16 KB pages spanned by hot code; crossings before padding) and measured (layout-averaged speed against stock; spread and layout-sensitive cases; per-case winners and losers).
+
+**Expectation:** small differences on Amber/M2 (instruction-fetch stalls 6% of the maintainer's set; packing the hot code changed none of the front-end-heavy cases measurably; large L1 instruction cache), possibly larger on x86 (32 KB L1I), so the comparison is most interesting where P006 lands.
