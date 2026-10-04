@@ -147,7 +147,7 @@ What they do:
 How placemat relates:
 - *Overlap (credit this):* placemat's interval is equation (4) applied at the **pad** (build) level (a t interval over per-pad summaries), with the pad playing the role of K&J's compilation level. Their "turn an uncontrolled variable into a random one" is exactly the code and data perturbation. Their "or a controlled one" is exactly pinning (an order file and pads turn code placement into a controlled variable).
 - *Differences:*
-  - placemat's variants are **designed** (a low-discrepancy, Latin-hypercube-style joint sequence over pad, colour and step), not random rebuilds.
+  - placemat's variants are **designed** (a joint Kronecker (low-discrepancy) sequence over pad and colour, with reproducible pseudo-random hashed steps), not random rebuilds.
   - It is a **paired** design (both versions timed in the same round, so per-round ratios block out drift) rather than two independent systems with Fieller's ratio interval.
   - It varies code at the top level (pads) and data within each pad (colour and step settings), plus a run covariate, and **tests** each with permutation tests; K&J estimate variance components but attribute nothing to causes.
   - It stops **adaptively** on interval width rather than dimensioning up front.
