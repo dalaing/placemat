@@ -27,14 +27,17 @@ From Kalibera & Jones (ISMM 2013) and Mytkowicz et al. (2009); see PRIOR-ART.md 
 | **round** | one pass that runs every arm's builds once, in random order: a *block* in the design |
 | **arm** | one version being compared: the base and one or more changes |
 | **pad** | one code-layout build of an arm (a chosen code pad): the *build level*, the highest level of repetition, and the unit of the interval |
-| **layout variant** | one (pad, colour) combination: a pad's build timed at one data colour sequence; each pad has two, colour 0 and its designed colour |
+| **layout variant** | one (pad, data setting) combination: a pad's build timed at one data setting; each pad has two, the stock data setting and its designed one |
+| **colour** | a constant offset added to every coloured allocation: moves the data relative to fixed things (page boundaries, uncoloured allocations, static data, the stack) |
+| **step** | a per-allocation offset, the k-th coloured allocation moved by step·(k+1): moves coloured buffers relative to *each other* (their L1 set conflicts) |
+| **data setting** | a (colour, step) pair; (0, 0) is the stock placement |
 | **stock** | the build as the project ships it: no pad, no colour |
 | **code axis / data axis / run** | what a variant varies: where code sits; where large buffers sit; what differs between executions (ASLR, the machine) |
 | **layout spread** | how much a case's time varies across variants of one build (a variance component at the build level) |
 | **layout-sensitive case** | a case whose spread over the code (or data) axis exceeds the threshold, with a permutation p ≤ 0.01 that also survives the false-discovery-rate correction across cases |
 | **hot entry span** | from a hot function's entry to its last sampled offset under 1 KB that holds at least 10% of the function's samples |
 | **pinned** | built so the hot code's addresses do not depend on unrelated code |
-| **coloured** | built so large allocations are spread over the cache's set stride |
+| **coloured** | built (or run) so large allocations get colours and/or steps |
 | **4 KB boundary crossing** | a hot loop (or a hot function's entry-to-loop span) straddling a 4 KB address boundary (not "page crossing": macOS arm64 pages are 16 KB, and the mechanism is unexplained) |
 | **L1 set conflicts** | buffers used together mapping to the same L1 sets (not "4K aliasing", which is Intel's store-to-load false dependence) |
 
@@ -139,9 +142,18 @@ Each round runs every arm's current variant once, in random order (randomised mu
 
 ### 5.3 Data axis
 
-Colouring must vary the *relative* offsets of buffers used together, so a constant offset per variant is useless: it moves every block equally. A variant's colour c_j is therefore a *step*: the k-th large allocation of the execution (default ≥64 KB) is offset by (c_j·(k+1)) mod stride, in whole cache lines (64 B by default; never finer than the project's alignment guarantee), where stride is the L1 set stride (16 KB on M2; 4 KB on typical x86). The steps come from a √2 Kronecker sequence, c_j = 64·⌊(stride/64)·frac(w + j√2)⌋, with seed w ∈ [0, 1) recorded per run. Colour 0 is the stock placement. Each pad is timed at colour 0 and at its own step, so code effects are measured at the real placement and each pair isolates data; K variants cost K/2 builds per arm.
+Large allocations (default ≥64 KB) can be moved in two independent ways, and placemat supports both:
 
-A hooked build's colour 0 is not the shipped binary (the hook adds code), so the unhooked stock build is always timed as one more arm.
+- **Colour:** one constant offset c for every coloured allocation. It moves the data relative to things that stay put: page and huge-page boundaries (hardware prefetchers commonly stop at a page boundary; split accesses; TLB reach), uncoloured allocations, static data and the stack. It does not change coloured buffers' offsets relative to each other.
+- **Step:** the k-th coloured allocation of the execution moves by s·(k+1). This varies coloured buffers' offsets relative to each other, which is what decides their L1 set conflicts.
+
+Together, the k-th allocation's offset is (c + s·(k+1)) mod span, in whole units: unit = the cache line (64 B by default; never finer than the project's alignment guarantee); span = the L1 set stride (16 KB on M2; 4 KB on typical x86) for steps, and up to the page size or more for colours, as configured. A project can run colours only, steps only, or both.
+
+Which matters depends on the allocator. Amber's buddy allocator aligns every large block to its own size, so all large buffers shared one offset mod 16 KB: their problem was relative, and its validation used steps only (a colour there moves every large block equally and leaves their conflicts unchanged). An allocator that already scatters large blocks, or a workload sensitive to page boundaries or to its position relative to small allocations, needs colours. The survey's address logging (§7) says which, and the default is both.
+
+Design: each pad j gets a data setting (c_j, s_j) from the same low-discrepancy sequence as the pads (a three-dimensional Kronecker sequence; with seeds recorded per run), and is timed at the stock setting (0, 0) and at (c_j, s_j). Code effects are measured at the real placement, each pair isolates data, and K variants cost K/2 builds per arm. When both colours and steps vary, the data contrast is split between them by regression on the two (an open question how well that works with few pads, §11); a project that wants a clean split can run colours and steps in separate batches.
+
+A hooked build's (0, 0) setting is not the shipped binary (the hook adds code), so the unhooked stock build is always timed as one more arm.
 
 ### 5.4 Targeted variants
 
@@ -189,16 +201,18 @@ Two ways to colour, depending on who owns the allocator:
 
 ```c
 /* placemat.h (sketch) */
-size_t placemat_colour(size_t size, size_t spare_room); /* offset for a block of `size` with `spare_room` free bytes; 0 in stock runs */
+size_t placemat_colour(size_t size, size_t spare_room); /* offset for the next block of `size` with `spare_room` free bytes; 0 in stock runs */
 void   placemat_log_alloc(const void *p, size_t size);  /* address logging for diagnostics */
 void   placemat_log_free(const void *p);
-/* environment: PLACEMAT_COLOUR (sequence seed or explicit colour), PLACEMAT_COLOUR_STEP (default 64),
-   PLACEMAT_COLOUR_MIN (default 65536), PLACEMAT_ADDRLOG (0, 1 = regions, 2 = blocks) */
+/* environment: PLACEMAT_COLOUR (constant offset c), PLACEMAT_STEP (per-allocation step s),
+   PLACEMAT_UNIT (granularity, default 64), PLACEMAT_SPAN (default the L1 set stride),
+   PLACEMAT_MIN (smallest coloured size, default 65536), PLACEMAT_ADDRLOG (0, 1 = regions, 2 = blocks).
+   The k-th coloured block's offset is (c + s*(k+1)) mod span, rounded down to the unit, and capped by spare_room. */
 ```
 
 Rules the allocator side must keep (learnt on Amber): take the colour from existing spare room so size classes don't change; undo it on free so free lists never see coloured blocks; keep the small-block fast path untouched (an extra check on every allocation cost allocation-bound cases 3-10% until it moved out of line); keep growth points the same (a vector growing one item at a time must still move up a class where it did); preserve the alignment guarantee, and check it with the project's own assertion build.
 
-The same hook doubles as the shape of a project's *real* fix: if a project adopts colouring (as Amber may), its colour choice can defer to `placemat_colour()` under the flag, so placemat can still vary it. Valgrind client requests can sit under the same flag (P004, P006).
+The same hook doubles as the shape of a project's *real* fix: if a project adopts colouring (as Amber may, with its own per-allocation steps), its choice can defer to `placemat_colour()` under the flag, so placemat can still vary it. Valgrind client requests can sit under the same flag (P004, P006).
 
 Address logging answers the survey's first data question. Large buffers can sit at fixed offsets (a hidden bias: every run gets the same placement, good or bad; Amber's sat at the same offset mod 16 KB in every execution and every code pad), move with ASLR (run noise), or move with code pads (then the two axes are confounded unless data is controlled).
 
@@ -253,8 +267,9 @@ What stays with Amber: its configuration file, its allocator patches and their g
 3. **Lock and quiet machine:** how placemat learns that the machine is quiet (load average, a user-supplied lock command), and what it does when it isn't.
 4. **Run-level perturbation:** whether to vary environment size (hyperfine, Mytkowicz) as a third axis, or only record the ASLR base as now.
 5. **Automated targeted variants** (§5.4) and their weighting.
-6. **Pinning back ends:** whether to offer BOLT or Propeller as alternatives to the order-file pipeline on Linux.
-7. **Names:** whether "survey / fix / check / audit" are the right command names.
+6. **Splitting the data contrast between colours and steps** when both vary in one batch (§5.3): regression on (c, s), or on features derived from logged addresses (which buffers share sets; which cross page boundaries), and how many pads that needs.
+7. **Pinning back ends:** whether to offer BOLT or Propeller as alternatives to the order-file pipeline on Linux.
+8. **Names:** whether "survey / fix / check / audit" are the right command names.
 
 ## 12. Claims and credits
 

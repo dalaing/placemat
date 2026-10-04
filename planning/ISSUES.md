@@ -76,8 +76,10 @@ To generalise: ELF and lld `--symbol-ordering-file` / GNU ld section ordering (P
 
 **Why two adapters.** Projects on the system allocator can be coloured from outside: a `malloc` interposer (`DYLD_INSERT_LIBRARIES` / `LD_PRELOAD`) that offsets large allocations by a colour. Custom allocators cannot: Amber's buddy allocator takes memory with `mmap` and aligns each block to its own size, so every payload ≥64 KB lands at the same offset mod 16 KB in every run (structural L1 set aliasing); shifting the `mmap` region moves every block equally and changes nothing. They need an in-allocator hook.
 
+**Colours and steps** (user, 2026-10-05: a general tool needs both). A *colour* is one constant offset for every coloured allocation (moves data relative to page boundaries, uncoloured allocations, statics, the stack); a *step* offsets the k-th allocation by s·(k+1) (moves coloured buffers relative to each other: their set conflicts). Offset of the k-th block: (c + s·(k+1)) mod span. Amber needed steps only (its buddy allocator gives every large block the same offset, so a colour moves them all equally); other allocators and page-boundary-sensitive workloads need colours. DESIGN §5.3.
+
 **Hook header (sketch).** A single header a project includes under a compile flag (e.g. `-DPLACEMAT_HOOK`), identical binary without it:
-- `placemat_colour(size, spare_room)` → offset to apply to a large block (from environment variables set by placemat for each variant; 0 in stock runs);
+- `placemat_colour(size, spare_room)` → offset to apply to the next large block, from the variant's colour and step (environment variables `PLACEMAT_COLOUR`, `PLACEMAT_STEP`, `PLACEMAT_UNIT`, `PLACEMAT_SPAN`, `PLACEMAT_MIN`); 0 in stock runs;
 - `placemat_log_alloc(ptr, size)` → address logging for diagnostics (which offsets alias; is placement fixed per binary or per run?).
 Valgrind client requests (`VALGRIND_MALLOCLIKE_BLOCK` / `VALGRIND_FREELIKE_BLOCK`) under the same flag would let DHAT/Massif/Memcheck see custom-allocator blocks (P006).
 
