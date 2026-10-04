@@ -17,7 +17,7 @@ Supporting reports from those runs are copied into [amber-validation/](amber-val
 | [P007](#p007) | platform | macOS measurement tools beyond sampling | to explore |
 | [P008](#p008) | platform | a Linux arm64 VM on the Mac, for Valgrind on the same CPU | to explore |
 | [P009](#p009) | tooling | compare hot-code ordering strategies on the system under test | idea (user, 2026-10-05) |
-| [P010](#p010) | validation | validate placemat on one or two small open-source projects that could benefit and can be coloured | idea (user, 2026-10-05) |
+| [P010](#p010) | validation | validate placemat on zstd, SQLite and Lua | chosen (user, 2026-10-05); after extraction |
 
 ---
 
@@ -152,4 +152,4 @@ Candidates (allocator APIs to be confirmed before relying on them):
 - **ngn/k** (the K interpreter Amber derives from; checked out next to Amber): likely the same buddy-allocator structure and so the same structural L1 set conflicts; small and fast to build; a direct comparison with the Amber results. Needs a hook (no allocator API), kept with ngn/k (AGPL-3.0).
 - **Lua or QuickJS**: small interpreters with allocator callbacks (`lua_newstate(lua_Alloc)`; `JS_NewRuntime2` with `JSMallocFunctions`): mainly a code-axis and ordering-strategy (P009) test, most interesting on x86 (P006), where interpreter loops are more front-end bound.
 
-Suggested order: zstd (data axis through an allocator API, no patching), then SQLite (both axes, an established performance culture to compare with), with ngn/k as the closest relative to Amber. Each gets the lifecycle in DESIGN.md §3: a survey first, and only then fixes.
+**Chosen (user, 2026-10-05): zstd, SQLite and Lua.** Together they cover the data axis through an allocator API (zstd), both axes in a project with an established performance method to compare against (SQLite), and an interpreter for the code axis and ordering strategies (Lua). ngn/k stays a candidate (the closest relative to Amber). Each gets the lifecycle in DESIGN.md §3: a survey first, and only then fixes. They come after the extraction (P001 step 3), as placemat's first users after Amber; licences: zstd BSD/GPLv2 dual, SQLite public domain, Lua MIT, so their adapters can live in placemat's examples if they contain no project source beyond API use.
