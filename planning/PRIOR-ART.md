@@ -217,7 +217,7 @@ Not claimable: layout sensitivity itself; randomising layout for benchmarking; m
   - .NET 6 loop alignment and the JCC-erratum guidance (boundary rules).
   - Benjamini & Hochberg 1995.
 - **Build on:**
-  - lld `--randomize-section-padding` and `--shuffle-sections` (and mold's) as the ELF code-axis adapters, restricted to `.text` where code-versus-data attribution matters, recording the resulting addresses.
+  - lld/mold `--shuffle-sections` as the ELF code-axis adapter, restricted to `.text*` by its glob where code-versus-data attribution matters (`--randomize-section-padding` pads data sections too, with no filter as merged, so it serves only as a combined layout axis), recording the resulting addresses.
   - lld/mold `--symbol-ordering-file` and GNU ld's `--section-ordering-file` for pinning on Linux; BOLT or Propeller as optional pinning back ends.
   - hyperfine's environment-offset idea at the run level.
   - BenchmarkDotNet's "re-create the data after perturbing" and "don't drop outliers when perturbing", and its MValue multimodality check for two-speed cases.

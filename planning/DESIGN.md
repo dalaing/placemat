@@ -117,7 +117,7 @@ placemat (Python, standard library only)
 ├── adapters
 │   ├── bench       name/value lines; Google Benchmark JSON; K out[] scripts (§8.1)
 │   ├── build       the build protocol: flags, pad source, order file (§8.2)
-│   ├── code        source pads; lld --randomize-section-padding / --shuffle-sections
+│   ├── code        source pads; lld --shuffle-sections (on .text*)
 │   └── data        malloc interposer; hook header for custom allocators (§7)
 ├── binary          Mach-O and ELF: symbols, loops, boundary crossings, per-function diffs
 ├── pin             profile import, hot-set choice, ordering, pad search, verification (§6.3)
@@ -136,8 +136,8 @@ A **round** runs every layout variant of the current batch, for every arm, in a 
 
 ### 5.2 Code axis
 
-- **Source pads** (portable): an unused function of P bytes, kept by `__attribute__((used))`, placed before the code under study. On Amber it sits at the top of the first source file in link order; under LTO, "linked first" alone does not fix where a function lands, so placement is always verified from the linked binary's symbols (§8.2). Sizes come from a golden-ratio sequence, P_j = 64·⌊64·frac(u + j/φ)⌋ + 4·((7j + v) mod 16), with seeds u ∈ [0, 1) and integer v ∈ [0, 16), chosen per run and recorded: spread over the 4 KB period and the 64-byte phase at once (for seed 0, 12 pads: largest gap 620 B against 341 for even spacing; 12 of 16 phases mod 64; all 4 mod 16). The R2 sequence was rejected (its first coordinate is near 3/4, so pads cluster).
-- **lld** (Linux): `--randomize-section-padding` (lld 20) as the code axis, `.text` only so code and data stay separable; `--shuffle-sections` as a coarser alternative. Record the resulting addresses either way.
+- **Source pads** (portable): an unused function of P bytes, kept by `__attribute__((used))`, placed before the code under study. On Amber it sits at the top of the first source file in link order; under LTO, "linked first" alone does not fix where a function lands, so placement is always verified from the linked binary's symbols (§8.2). Sizes come from a golden-ratio sequence, P_j = 64·⌊64·frac(u + j/φ)⌋ + 4·((7j + v) mod 16), with seeds u ∈ [0, 1) and integer v ∈ [0, 16), chosen per run and recorded: spread over the 4 KB period and the 64-byte phase at once (with the Amber stage's seed 0, whose `random.Random(0)` draws give u ≈ 0.844 and v = 13, 12 pads: largest gap 620 B against 341 for even spacing; 12 of 16 phases mod 64; all 4 mod 16; placemat derives u, v, w₁ and w₂ the same way, from one run seed with Python's `random.Random`, and records them). The R2 sequence was rejected (its first coordinate is near 3/4, so pads cluster).
+- **lld** (Linux): `--shuffle-sections`, which takes a section glob, so it can be limited to `.text*` and keep code and data separable. `--randomize-section-padding` (lld 20) pads code and data sections alike (`.text*`, `.rodata`, `.data`, `.data.rel.ro`, `.bss`) with no filter, as merged (llvm PR #117653), so it mixes data movement into the code axis; use it only as a combined layout axis, or if a later lld adds a filter (check before relying on either). Source pads remain the portable code axis. Record the resulting addresses either way.
 - **Boundaries** are platform parameters: 4 KB on Apple M2 (measured); 32/64-byte fetch windows and 4 KB on x86 (to be measured, P006).
 
 ### 5.3 Data axis
@@ -195,7 +195,7 @@ For a layout-sensitive case: the hot loops whose crossing state differs between 
 2. **Hot set:** functions in order of combined share until each benchmark set reaches ~95% of in-binary samples.
 3. **Order:** C3-style clustering behind heaviest callers, clusters capped (16 KB), sorted by density.
 4. **Link:** ld64 `-order_file` or lld `--symbol-ordering-file` (GNU ld `--section-ordering-file`), plus `-falign-functions=16`: ld64 keeps each function's address mod 16 from the LTO object, so an order file alone pins only to within ~64 bytes.
-5. **Pads:** pad functions listed in the order file, sized by an exact search over the start address mod the boundary that minimises a weighted cost (Amber's `pads.py`: 10⁶ per small-loop crossing in a listed function, 10⁴ per hot-entry-span crossing, 1 per pad byte; this is the C2 invocation, and build D added 10³ per 64-byte-line crossing of a function's hottest loop). Loop crossings are effectively forbidden; a span crossing can be accepted if avoiding it would cost more than 10⁴ pad bytes, and the verification step reports any that remain.
+5. **Pads:** pad functions listed in the order file, sized by an exact search over the start address mod the boundary that minimises a weighted cost (Amber's `pads.py`: 10⁶ per small-loop crossing in a listed function, 10⁴ per hot-entry-span crossing, 1 per pad byte; this is the C2 invocation, and build D added 10³ per 64-byte-line crossing of a function's hottest loop). Loop crossings are effectively forbidden; since any start mod 4096 costs at most 4,080 pad bytes, a hot-span crossing survives only when avoiding it would make a loop cross, and the verification step reports any that remain.
 6. **Verify:** symbols present and in order (`nm`; never trust the linker's silence: a build script may discard its warnings), no crossings, then time (§3.2).
 7. **Regenerate** pads on every build (they belong to the build, not the source); the steady state's placement check does this.
 
@@ -217,7 +217,8 @@ void   placemat_log_alloc(const void *p, size_t size);  /* address logging for d
 void   placemat_log_free(const void *p);
 /* environment: PLACEMAT_COLOUR (constant offset c), PLACEMAT_STEP_MODE (hashed | linear),
    PLACEMAT_STEP_SEED (hashed: seed_j) or PLACEMAT_STEP (linear: step s); with neither set, no step is applied
-   (a seed of 0 is a valid step, not "off"),
+   (a seed of 0 is a valid step, not "off"); setting both, or the one that does not match PLACEMAT_STEP_MODE,
+   is an error at start-up,
    PLACEMAT_UNIT (granularity, default 64), PLACEMAT_COLOUR_SPAN (default the page size),
    PLACEMAT_STEP_SPAN (default the L1 set stride),
    PLACEMAT_MIN (smallest coloured size, default 65536), PLACEMAT_ADDRLOG (0, 1 = regions, 2 = blocks).
@@ -226,7 +227,8 @@ void   placemat_log_free(const void *p);
    when the block has less spare room, the offset is wrapped modulo the largest whole number of units
    that fits (0 below one unit). Wrapping keeps offsets spread rather than piling every short block on one
    value, but a wrapped block no longer has the variant's exact colour or step; every applied offset is
-   logged, and a variant where more than 10% of coloured blocks were wrapped is flagged in the report. */
+   logged (as a summary kept in memory and written at exit, not a line per block), and a variant where more
+   than 10% of coloured blocks were wrapped is flagged in the report. */
 ```
 
 Rules the allocator side must keep (learnt on Amber): take the colour from existing spare room so size classes don't change; undo it on free so free lists never see coloured blocks; keep the small-block fast path untouched (an extra check on every allocation cost allocation-bound cases 3-10% until it moved out of line); keep growth points the same (a vector growing one item at a time must still move up a class where it did); preserve the alignment guarantee, and check it with the project's own assertion build.
@@ -277,7 +279,7 @@ Measurement tools by platform (P006, P007): Valgrind (Cachegrind, Callgrind, DHA
 
 What stays with Amber: its configuration file, its allocator patches and their generator (they embed Amber's `src/m.c`; Amber is AGPL-3.0, so nothing derived from its source may enter MIT-licensed placemat; they are kept in the Amber fork's `pbt/patches/`), its benchmark scripts, and its machine lock (placemat should take a lock command as configuration rather than ship Amber's). Deliberate differences from the Amber stage: colours *and* steps with three variants per pad (Amber: steps only, two per pad), so the per-pad estimate weights the offset settings 2/3 (Amber 1/2) and the data test and flags split into colour and step families; batches counted in pads (Amber counted variants, two per pad); the never-zero fallback is one unit (Amber: 64·(1+z)); wrapped rather than dropped offsets when a block's spare room is short (Amber's hook dropped to 0); the interposer's k from a per-process base and one fixed granule; hashed steps by default (Amber: linear steps over a per-class slot index, which can give blocks of different sizes the same k). Amber's adapter follows the general rules (k on the fixed granule from one per-process base; hashed steps by default), so Amber is re-validated under placemat rather than reproduced exactly (user, 2026-10-05). The data-hook part of `layouts.py` (`HOOK_DECL`, `HOOK_FUNS`, `HOOK_EDITS`) quotes Amber source and is **not** extracted: placemat's hook is written fresh against `placemat.h`, and Amber's adapter (in the fork) maps it onto Amber's allocator.
 
-**Regression test: re-validating Amber.** Amber is re-validated under placemat's general rules (hashed steps, k on the fixed granule, batches in pads, three data settings per pad), not reproduced with the prototype's exact choices (user, 2026-10-05). The runs differ in detail, so the test is the same *verdicts*, not the same numbers: (a) main against main: no changes; (b) the branch with a placement slowdown (`grade` +13% in the stock layout): placement, not change, attributed to code; (c) the window kernels: step-dependent at the stock placement, and the window prototype's gain still a change; (d) the pinned build against main: code spread collapses (with targeted pads for the rare windows); (e) the coloured build: the run-to-run two-speed switching gone. A different verdict is a finding to explain, not automatically a regression: the general rules were partly designed to fix weaknesses the Amber prototype had (for example, linear steps over per-class slots could not separate blocks of different sizes).
+**Regression test: re-validating Amber.** Amber is re-validated under placemat's general rules (hashed steps, k on the fixed granule, batches in pads, three data settings per pad), not reproduced with the prototype's exact choices (user, 2026-10-05). The runs differ in detail, so the test is the same *verdicts*, not the same numbers: (a) main against main: no changes, no code flags, data flags only where real (qgroup, maxprior); (b) the branch with a placement slowdown (`grade` +8..+13% in the stock layout): placement, attributed to the stock code layout; (c) the window kernels: on main against main, data and run flags for msum, mavg and mdev with intervals containing 1; the window prototype against base, a change, step-dependent for msum, mavg and mdev but not for mmin100; (d) the pinned build against main: code spread collapses (with targeted pads for the rare windows); (e) the coloured build: the run-to-run two-speed switching gone. A different verdict is a finding to explain, not automatically a regression: the general rules were partly designed to fix weaknesses the Amber prototype had (for example, linear steps over per-class slots could not separate blocks of different sizes). Reference: [amber-validation/joint-stage-summary.md](amber-validation/joint-stage-summary.md).
 
 ## 11. Open questions
 
