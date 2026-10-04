@@ -94,14 +94,14 @@ Valgrind client requests (`VALGRIND_MALLOCLIKE_BLOCK` / `VALGRIND_FREELIKE_BLOCK
 ### P005
 **Make the stage faster** · tooling · to do (user, 2026-10-05: "they take hours") · was Amber A276
 
-Builds are cheap (~8 s per variant: one file recompiled and a relink); timing dominates (~200 cases × up to 24 variants × rounds; 12-50 s per case; 1-3 h per comparison). Shortcuts, by payoff:
+Builds are cheap (~8 s per variant: one file recompiled and a relink); timing dominates (~200 cases × up to 24-36 variants × rounds; 12-50 s per case; 1-3 h per comparison). Shortcuts, by payoff:
 1. **Time only affected cases** (needs pinned builds, P003): unchanged hot functions don't move, so with a "which functions' machine code changed" tool (Amber's `samefn.py`) and the profile's case → function map, skip or spot-check cases whose hot functions are identical and unmoved. Typical change: 200 → 10-30 cases. Also an argument for pinning in any project: it makes change benchmarking cheap, not just stable.
 2. **Drop axes that cannot matter:** colouring built in (P004) removes the data axis (one variant per pad instead of two or three); changes that leave the binary unchanged (scripts in the project's own language, docs, tests) skip the code axis (detect from the diff; caveat: script changes can alter the allocation sequence, which colouring largely neutralises).
 3. **Multi-arm runs:** base, P1, P2, P3 in one rotation, timing the base once per round (n+1 instead of 2n executions).
-4. **Adaptive variants and rounds:** on pinned + coloured builds start at 4 variants; stop rounds early when the interval is tight; calibrate repetitions to ~20-50 ms per sample instead of fixed counts.
+4. **Adaptive variants and rounds:** on pinned + coloured builds (data axis skipped, one variant per pad) let the project lower the first batch below 8 pads where spreads are known to be small; stop rounds early when the interval is tight; calibrate repetitions to ~20-50 ms per sample instead of fixed counts.
 5. **Instruction-count pre-filter** (P007's counters, or Cachegrind on Linux): identical instructions plus unmoved code → skip.
 6. **Representative subsets while iterating** (~40 cases clustered by profile), always finishing with the full set: no verdicts from a subset.
-7. **Repetition counts per level from Kalibera & Jones (ISMM 2013):** their formula chooses how many repetitions to run at each lower level (iteration, execution) from each level's variance and cost; placemat's layout variant is their compilation level (PRIOR-ART.md).
+7. **Repetition counts per level from Kalibera & Jones (ISMM 2013):** their formula chooses how many repetitions to run at each lower level (iteration, execution) from each level's variance and cost; placemat's pad (one code-layout build) is their compilation level (PRIOR-ART.md).
 Not helpful: timing cases in parallel on different cores (shared L2 and memory bandwidth). Expected: a typical change check from hours to ~10-20 min; research comparisons about halved.
 
 ### P006
@@ -140,7 +140,7 @@ Different orderings of the hot set optimise different things; placemat could bui
 **Expectation:** small differences on Amber/M2 (instruction-fetch stalls 6% of the maintainer's set; packing the hot code changed none of the front-end-heavy cases measurably; large L1 instruction cache), possibly larger on x86 (32 KB L1I), so the comparison is most interesting where P006 lands.
 
 ### P010
-**Validate placemat on one or two small open-source projects** · validation · idea (user, 2026-10-05)
+**Validate placemat on zstd, SQLite and Lua** · validation · chosen (user, 2026-10-05); after extraction
 
 Amber proved the methods, but it shaped them too. A second and third project, chosen to (a) plausibly benefit from a placemat analysis and (b) be colourable, would test whether the design is general. Colourable without patching the project is best: a pluggable allocator API lets the harness install placemat's colouring allocator from outside; a project on the system allocator can use the interposer (P004).
 
