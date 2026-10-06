@@ -41,6 +41,11 @@ jobs:
           sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -q gcc clang binutils unzip
       - name: machine, toolchain, counters; stack offset, region lottery, pad phases (DESIGN 5.2, 5.4, 5.5)
         run: python scripts/probes/run.py --runs 50 --json probes-${{ matrix.os }}.json
+      - name: counters with perf_event_paranoid lowered (the default, 4, refuses every counter)
+        run: |
+          sudo sysctl -w kernel.perf_event_paranoid=1
+          cc -O2 -o pmuprobe scripts/probes/pmuprobe.c
+          ./pmuprobe cycles=0:0 instructions=0:1 cache_misses=0:3 branch_misses=0:5 | tee -a "$GITHUB_STEP_SUMMARY"
       - name: sources for the layout scan (Lua 5.4.7, checksum-verified; SQLite 3.53.0)
         run: |
           mkdir -p src && cd src

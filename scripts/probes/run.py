@@ -95,6 +95,7 @@ def compilers() -> list[str]:
         if not (c and shutil.which(c)):
             continue
         v = subprocess.run([c, "--version"], capture_output=True, text=True).stdout   # gcc is clang on macOS
+        v = v.split(None, 1)[1] if v.split() else v       # "cc (Ubuntu ...)" and "gcc (Ubuntu ...)" are one gcc
         if v not in seen:
             seen.add(v); out.append(c)
     return out
@@ -173,7 +174,8 @@ def toolchain(tmp: Path) -> dict:
         loads = ""
         if shutil.which("readelf") and exe.exists():
             ph = subprocess.run(["readelf", "-lW", str(exe)], capture_output=True, text=True).stdout
-            loads = " ".join(l.split()[6] for l in ph.splitlines() if l.strip().startswith("LOAD") and len(l.split()) > 6)
+            loads = " ".join("".join(l.split()[6:-1]) or "?" for l in ph.splitlines()
+                             if l.strip().startswith("LOAD"))       # flags (R, RE, RW), one per LOAD segment
         gcc_opts = ""
         if "gcc" in subprocess.run([cc, "--version"], capture_output=True, text=True).stdout.lower() \
                 and "clang" not in subprocess.run([cc, "--version"], capture_output=True, text=True).stdout.lower():
