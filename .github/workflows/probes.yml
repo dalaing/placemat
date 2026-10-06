@@ -55,7 +55,7 @@ jobs:
           sh ../examples/sqlite/fetch.sh sqlite 3.53.0:2026
       - name: static layout at the code axis's pads (loops across 32/64 B, JCC-erratum branches)
         run: python scripts/probes/layout.py --lua src/lua-5.4.7/src --sqlite src/sqlite/3.53.0 --json layout-${{ matrix.os }}.json
-      - name: Lua across code-axis pads: timings in rounds, and hardware events where the runner can count
+      - name: "Lua across code-axis pads: timings in rounds, and hardware events where the runner can count"
         run: python scripts/probes/counters.py --lua src/lua-5.4.7/src --rounds 7 --json counters-${{ matrix.os }}.json
       - uses: actions/upload-artifact@v7
         with:
