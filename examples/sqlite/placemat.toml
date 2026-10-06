@@ -1,0 +1,67 @@
+# placemat configuration for SQLite (MIT; no SQLite source in this directory). See README.md.
+#
+# An arm is a directory holding one SQLite amalgamation (sqlite3.c, sqlite3.h), kept outside this
+# repository, e.g. ../placemat-work/sqlite/3.53.0 (fetch.sh makes them):
+#
+#   PYTHONPATH=../.. python3.12 -m placemat run --config examples/sqlite/placemat.toml \
+#       --arm base=$W/sqlite/3.52.0 --arm new=$W/sqlite/3.53.0 --cases-file examples/sqlite/cases.txt \
+#       --work $W/sqlite/work --out $W/sqlite/runs --name 3.52-vs-3.53
+
+[project]
+name = "sqlite"
+root = "."                     # arms are directories, never git revisions of this repository
+
+[build]
+command = ["python3", "{config_dir}/build.py"]
+binary = "sqlbench"
+# The cache key of a directory arm: the amalgamation only. build.py and sqlbench.c live here, not in
+# the arm, so placemat does not see edits to them: use a fresh --work after changing either.
+inputs = ["sqlite3.c", "sqlite3.h"]
+
+[run]
+env = {}
+timeout = 600
+memory_mb = 2048
+rounds = 7
+
+[machine]
+# The machine-wide lock shared with the other timing work on this Mac (Amber's pbt/quiet.py):
+# exclusive for timing, shared for builds; quiet.py's own load settle is skipped (--max-load 0) since
+# placemat's noise probe (max_noise) gates timing.
+lock = ["python3", "{config_dir}/../../../amber/pbt/quiet.py", "--exclusive", "--max-load", "0", "--", "python3", "-c", "import sys; print('held', flush=True); sys.stdin.read()"]
+shared_lock = ["python3", "{config_dir}/../../../amber/pbt/quiet.py", "--shared", "--", "python3", "-c", "import sys; print('held', flush=True); sys.stdin.read()"]
+max_noise = 0.10               # wait for the noise probe's spread to be at most 10% (lock.py) ...
+wait = 2700                    # ... for up to 45 minutes
+boundary = 4096
+line = 64
+
+[data]
+# placemat's colouring allocator (placemat_alloc.c) installed by sqlbench.c with
+# sqlite3_config(SQLITE_CONFIG_MALLOC) in hooked builds only. The interposer cannot see SQLite's
+# heap on macOS: SQLite's default allocator calls malloc_zone_malloc, which it does not interpose.
+method = "allocator"           # placemat's colouring allocator through SQLite's allocator API
+vary = "both"
+step_mode = "hashed"
+unit = 64                      # SQLite needs 8-byte alignment; whole cache lines anyway
+colour_span = 16384            # the page size on macOS arm64
+step_span = 16384              # M2's L1D set stride (128 KB, 8-way)
+min = 32768                    # takes in the 48 KB lookaside slab; see README.md
+covariate = "khash"            # placemat_alloc has no region; k values in allocation order
+# placemat_alloc over-allocates every large block and adds a header at every setting, so its
+# (0, off) is not the placement SQLite's own allocator gives: the stock build differs in code AND data.
+stock_placement = false
+
+[stats]
+threshold = 0.03
+threshold_fast = 0.10
+fast_us = 5000
+
+[[suite]]
+name = "sqlbench"
+format = "lines"
+command = ["{binary}"]
+series = false                 # every case runs 10-200 ms; no regression series needed
+cases = ["ins_plain", "ins_ipk", "ins_idx_random", "ins_3idx", "scan_between", "scan_like", "sort_text",
+         "sort_limit", "group_by", "window_fn", "create_index", "idx_between", "idx_text_between", "ipk_lookup",
+         "textpk_lookup", "upd_between", "upd_rows", "del_rows", "delete_refill", "join4", "subquery",
+         "cte_mandel", "printf_round", "json_query", "integrity"]

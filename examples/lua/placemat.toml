@@ -1,0 +1,62 @@
+# placemat on Lua (P010): the benchmark host luabench.c running bench/*.lua, built by build.py.
+# placemat examples, MIT. Lua itself (MIT) is not in this repository: arms are unpacked release trees,
+# e.g. ../placemat-work/lua/lua-5.4.7 (curl -O https://www.lua.org/ftp/lua-5.4.7.tar.gz).
+#
+#   PYTHONPATH=<placemat> python3.12 -m placemat run --config examples/lua/placemat.toml \
+#       --arm base=<lua-5.4.6 tree> --arm new=<lua-5.4.7 tree> --cases fib,loop_int,... (the list below) \
+#       --work <work dir> --out <out dir> --name <name>
+#
+# SURVEY.md has the results on Apple M2 and why the data method is "hook".
+
+[project]
+name = "lua"
+root = "."                  # arms are directories; git arms would need root = a lua/lua checkout
+
+[build]
+command = ["python3", "{config_dir}/build.py"]
+binary = "luabench"
+inputs = ["src/*", "placemat-cflags"]   # placemat-cflags: optional per-arm compiler flags (build.py)
+# The build cache key covers the arm's src/, this table and the adapter files here (build.py, luabench.c).
+
+[run]
+env = {}
+timeout = 600
+memory_mb = 2048
+rounds = 7
+
+[machine]
+# The machine-wide lock shared with Amber's timing work: exclusive for timing, shared for builds.
+lock = ["python3", "{config_dir}/../../../amber/pbt/quiet.py", "--exclusive", "--max-load", "0", "--", "python3", "-c", "import sys; print('held', flush=True); sys.stdin.read()"]
+shared_lock = ["python3", "{config_dir}/../../../amber/pbt/quiet.py", "--shared", "--", "python3", "-c", "import sys; print('held', flush=True); sys.stdin.read()"]
+max_noise = 0.10           # wait (up to `wait` s) until placemat's noise probe spread is at most 10% before each batch
+wait = 2700
+boundary = 4096
+line = 64
+
+[data]
+# Hooked builds create every lua_State with lua_newstate(placemat_lua_alloc) (placemat_alloc.h),
+# linked after Lua so Lua's code does not move; stock builds use luaL_newstate (realloc/free).
+method = "hook"
+vary = "both"
+step_mode = "hashed"
+unit = 64                  # Lua needs 16-byte alignment (LUAI_MAXALIGN; malloc gives 16)
+colour_span = 16384        # the page size on macOS arm64
+step_span = 16384          # M2's L1D set stride (128 KB, 8-way)
+min = 65536                # arrays of 4096+ TValues, big strings and buffers
+covariate = "khash"        # placemat_alloc reports no region; k values in allocation order
+stock_placement = false    # the wrapper over-allocates large blocks at every setting, (0, off) included
+
+[stats]
+threshold = 0.03
+threshold_fast = 0.10
+fast_us = 5000
+
+[[suite]]
+name = "lua"
+format = "lines"
+command = ["{binary}", "{config_dir}/bench"]
+cwd = "{config_dir}"
+series = true
+cases = ["fib", "loop_int", "loop_float", "str_concat", "str_format", "str_pattern", "tbl_array", "tbl_sort",
+         "tbl_hash", "closures", "methods", "json", "coroutines", "array_stream", "nbody", "spectral",
+         "sieve", "vararg"]
