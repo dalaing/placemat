@@ -16,7 +16,11 @@ pad's median wall time; the run-to-run noise within a pad against the spread bet
 p-value for that spread (runs shuffled among pads within each round); the time by luaV_execute's address
 mod 8 and mod 16 (the phase behind a 2-5% effect on the M2); and, with counters, how well each pad's
 median counts track its median time (a pad that stalls more and also runs slower is more likely a real
-effect than noise).
+effect than noise). A second set of builds compiles lvm.c (luaV_execute's file) with -falign-functions=64:
+the pads still move the rest of the code, but luaV_execute stays at 0 mod 64, so if its phase is the cause
+the spread collapses (and the level shows phase 0's speed): whether aligning the hot function, the pin
+rule's fix, works here. The noise probe (placemat.lock) is read before every round, to set its spread
+beside the measured noise (DESIGN 11 item 3).
 
 Writes Markdown to stdout (and to $GITHUB_STEP_SUMMARY when set) and, with --json, every run."""
 from __future__ import annotations
@@ -40,6 +44,7 @@ from layout import compile_objects, link  # noqa: E402
 from run import build, compilers  # noqa: E402
 
 PADS = list(range(0, 64, 4))
+VARIANTS = [("", {}), ("+align64", {"lvm.c": ["-falign-functions=64"]})]
 FIB = "local function fib(n) if n < 2 then return n end return fib(n - 1) + fib(n - 2) end\nprint(fib(30))\n"
 GENERIC = [("instructions", 0, 1), ("cycles", 0, 0)]
 ARM = [("l1i_refill", 4, 0x01), ("itlb_refill", 4, 0x02), ("br_mispred", 4, 0x10), ("stall_frontend", 4, 0x23)]
@@ -109,6 +114,7 @@ def spearman(a: list[float], b: list[float]) -> float:
 
 def analyse(runs: list[dict], cc: str, counted: list[str]) -> dict:
     rs = [x for x in runs if x["cc"] == cc and "wall_ns" in x]
+    base = [x["wall_ns"] for x in runs if x["cc"] == cc.split("+")[0] and "wall_ns" in x]
     pads = sorted({x["pad"] for x in rs})
     per = {p: [x["wall_ns"] for x in rs if x["pad"] == p] for p in pads}
     med = {p: st.median(v) for p, v in per.items()}
@@ -118,6 +124,7 @@ def analyse(runs: list[dict], cc: str, counted: list[str]) -> dict:
            "within_noise": st.median(mad(v) / st.median(v) for v in per.values()),
            "between_range": (max(med.values()) - min(med.values())) / allmed,
            "between_sd": st.pstdev(med.values()) / allmed, "p_wall": perm_p(rs, "wall_ns"),
+           "level_vs_default": allmed / st.median(base) - 1 if "+" in cc and base else None,
            "per_pad": {p: {"mod64": phase[p], "wall": med[p] / allmed - 1,
                            **{k: st.median(x[k] for x in rs if x["pad"] == p and k in x) for k in counted}}
                        for p in pads},
@@ -133,20 +140,25 @@ def analyse(runs: list[dict], cc: str, counted: list[str]) -> dict:
 
 def markdown(r: dict) -> str:
     L = [f"## Lua fib(30) across code-axis pads: {r['machine']} ({r['rounds']} rounds, pads in random order per round)", ""]
+    if r.get("probe"):
+        sp = [x["spread"] for x in r["probe"]]
+        L += [f"Noise probe before each round: spread median {st.median(sp):.2%}, max {max(sp):.2%} "
+              f"(median {st.median(x['median_ms'] for x in r['probe']):.1f} ms).", ""]
     for cc, a in r["analysis"].items():
+        lv = f"; level {a['level_vs_default']:+.2%} against the default builds" if a.get("level_vs_default") is not None else ""
         L += [f"**`{cc}`:** within-pad noise (MAD/median) {a['within_noise']:.2%}; between-pad spread: range "
               f"{a['between_range']:.2%}, sd {a['between_sd']:.2%} of the median; permutation p {a['p_wall']:.3f} "
-              f"({a['pads']} pads)."]
+              f"({a['pads']} pads){lv}."]
         for mod, d in a["by_phase"].items():
             L.append(f"- wall time by luaV_execute mod {mod}: " + ", ".join(f"{q}: {v:+.2%}" for q, v in d.items()))
         if a["track"]:
             L.append("- pads' median counts against their median wall time (Spearman): "
                      + ", ".join(f"{k} {v:+.2f}" for k, v in a["track"].items()))
         keys = [k for k in r["counted"] if k != "instructions"]
-        L += ["", "| pad | luaV_execute mod 64 | wall vs median | " + " | ".join(keys) + " |",
-              "|---|---|---|" + "---|" * len(keys)]
+        cols = ["pad", "luaV_execute mod 64", "wall vs median"] + keys
+        L += ["", "| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
         for p, x in a["per_pad"].items():
-            L.append(f"| {p} | {x['mod64']} | {x['wall']:+.2%} | " + " | ".join(f"{x[k]:.0f}" for k in keys) + " |")
+            L.append("| " + " | ".join([str(p), str(x["mod64"]), f"{x['wall']:+.2%}"] + [f"{x[k]:.0f}" for k in keys]) + " |")
         L.append("")
     return "\n".join(L) + "\n"
 
@@ -169,21 +181,26 @@ def main() -> int:
         script = t / "fib.lua"
         script.write_text(FIB)
         for cc in compilers():
-            objs = compile_objects(cc, "lua", Path(a.lua), t / cc / "obj")
-            for p in PADS:
-                exe = link(cc, objs, p, t / cc / f"lua{p}")
-                fn = B.function_map(exe).get("luaV_execute")
-                builds.append((cc, p, exe, fn.start % 64 if fn else None))
+            for vname, per_file in VARIANTS:
+                label = cc + vname
+                objs = compile_objects(cc, "lua", Path(a.lua), t / label / "obj", per_file)
+                for p in PADS:
+                    exe = link(cc, objs, p, t / label / f"lua{p}")
+                    fn = B.function_map(exe).get("luaV_execute")
+                    builds.append((label, p, exe, fn.start % 64 if fn else None))
         for (cc, p, exe, m) in builds:                      # one discarded run of each build
             run_once(stat, exe, script, ev)
+        from placemat import lock
+        probe = []
         rnd = random.Random(a.seed)
         for rd in range(a.rounds):
+            probe.append(lock.probe_detail())
             order = builds[:]
             rnd.shuffle(order)
             for (cc, p, exe, m) in order:
                 runs.append({"round": rd, "cc": cc, "pad": p, "mod64": m, **run_once(stat, exe, script, ev)})
     counted = [n for n, _, _ in ev if all(n in x for x in runs)]
-    r = {"machine": platform.machine(), "rounds": a.rounds, "counted": counted,
+    r = {"machine": platform.machine(), "rounds": a.rounds, "counted": counted, "probe": probe,
          "analysis": {cc: analyse(runs, cc, counted) for cc in sorted({x["cc"] for x in runs})}, "runs": runs}
     md = markdown(r)
     print(md)

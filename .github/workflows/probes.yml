@@ -29,7 +29,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -57,6 +57,10 @@ jobs:
         run: python scripts/probes/layout.py --lua src/lua-5.4.7/src --sqlite src/sqlite/3.53.0 --json layout-${{ matrix.os }}.json
       - name: "Lua across code-axis pads: timings in rounds, and hardware events where the runner can count"
         run: python scripts/probes/counters.py --lua src/lua-5.4.7/src --rounds 7 --json counters-${{ matrix.os }}.json
+      - name: "SQLite page strides against malloc, timed in rounds"
+        run: python scripts/probes/sqlite_sweep.py --sqlite src/sqlite/3.53.0 --rounds 7 --json sweep-${{ matrix.os }}.json
+      - name: "region lottery and stack offset against speed"
+        run: python scripts/probes/lottery.py --runs 200 --json lottery-${{ matrix.os }}.json
       - uses: actions/upload-artifact@v7
         with:
           name: probes-${{ matrix.os }}
@@ -64,3 +68,5 @@ jobs:
             probes-${{ matrix.os }}.json
             layout-${{ matrix.os }}.json
             counters-${{ matrix.os }}.json
+            sweep-${{ matrix.os }}.json
+            lottery-${{ matrix.os }}.json

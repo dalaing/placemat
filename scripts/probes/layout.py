@@ -38,7 +38,8 @@ SQLITE_FLAGS = ["-DSQLITE_THREADSAFE=0", "-DSQLITE_DEFAULT_MEMSTATUS=0", "-DSQLI
                 "-DSQLITE_OMIT_LOAD_EXTENSION"]
 
 
-def compile_objects(cc: str, project: str, src: Path, out: Path) -> list[Path]:
+def compile_objects(cc: str, project: str, src: Path, out: Path, per_file: dict | None = None) -> list[Path]:
+    """Objects for `project`; `per_file` maps a source file's name to extra flags for it alone."""
     out.mkdir(parents=True, exist_ok=True)
     if project == "lua":
         files = [f for f in sorted(src.glob("*.c")) if f.name not in ("luac.c", "onelua.c")]
@@ -49,7 +50,7 @@ def compile_objects(cc: str, project: str, src: Path, out: Path) -> list[Path]:
     objs = []
     for f in files:
         o = out / (f.stem + ".o")
-        subprocess.run([cc, "-O2"] + flags + ["-c", str(f), "-o", str(o)], check=True)
+        subprocess.run([cc, "-O2"] + flags + (per_file or {}).get(f.name, []) + ["-c", str(f), "-o", str(o)], check=True)
         objs.append(o)
     return objs
 
