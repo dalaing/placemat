@@ -59,13 +59,13 @@ start nothing else timing-heavy on the machine meanwhile.
 
 ## CI: deterministic checks on GitHub-hosted runners
 
-`.github/workflows/linux.yml` runs what needs no quiet machine, on Linux x86-64 and arm64 (`ubuntu-24.04`,
-`ubuntu-24.04-arm`). Hosted runners are shared VMs on varying CPUs, so nothing there is a placement timing.
+`.github/workflows/linux.yml` (tests, box) and `probes.yml` (the platform probes) run what needs no quiet
+machine, on Linux x86-64 and arm64 (`ubuntu-24.04`, `ubuntu-24.04-arm`). Hosted runners are shared VMs on varying CPUs, so nothing there is a placement timing.
 
 | job | when | what it checks |
 |---|---|---|
 | `tests` | every push and pull request | the unit tests with native gcc, clang, lld and GNU ld: ELF analysis, pinning, the data adapters on glibc |
-| `probes` | every push and pull request | `scripts/probes/run.py`: the initial stack offset's randomisation and its steps with the environment's size (DESIGN §5.5); where a 1 GB mapping and an 8 MB malloc block land, and whether bases repeat (the region lottery, §5.4); which phases the code-axis pads move code by under each compiler (§5.2). Results in the run's summary and as an artifact |
+| `probes` (`probes.yml`) | weekly, on demand, and on pushes that change `scripts/probes/` or the pad source | `scripts/probes/run.py`: the initial stack offset's randomisation and its steps with the environment's size (DESIGN §5.5); where a 1 GB mapping and an 8 MB malloc block land, and whether bases repeat (the region lottery, §5.4); which phases the code-axis pads move code by under each compiler (§5.2). Results in the run's summary and as an artifact |
 | `box` | weekly and on demand (x86-64) | `box.sh setup` end to end (packages, sources, SQLite amalgamations from the mirror, the overlay from real sysfs, the tests), `DRY=1 box.sh queue`, a one-batch `placemat check` of Lua's `fib` with the noise gate off (the pipeline, not the timings), and Cachegrind instruction counts for SQLite's page-cache check-in |
 
 The probes also run locally: `python3 scripts/probes/run.py [--runs N] [--json OUT]` (macOS and Linux).

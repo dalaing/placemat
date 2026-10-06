@@ -1,6 +1,7 @@
-# Deterministic checks of placemat on Linux x86-64 and arm64 (GitHub-hosted runners). Nothing here is a
-# timing measurement: hosted runners are shared VMs on varying CPUs, so placement timing belongs on a quiet
-# machine (scripts/box.sh). See scripts/README.md, "CI".
+# Deterministic checks of placemat on Linux x86-64 and arm64 (GitHub-hosted runners): the unit tests on
+# every push and pull request; the box script end to end weekly and on demand. The platform probes are in
+# probes.yml. Nothing here is a timing measurement: hosted runners are shared VMs on varying CPUs, so
+# placement timing belongs on a quiet machine (scripts/box.sh). See scripts/README.md, "CI".
 name: linux
 
 on:
@@ -27,8 +28,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: toolchains
@@ -37,30 +38,6 @@ jobs:
           sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -q gcc clang lld llvm binutils make
       - name: unit tests (native ELF analysis, pinning with lld and GNU ld, the data adapters on glibc)
         run: python -m unittest discover -s tests -t . -v
-
-  probes:
-    name: address probes (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, ubuntu-24.04-arm]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: compilers
-        run: |
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get update -q
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -q gcc clang
-      - name: stack offset, region lottery, pad phases (DESIGN 5.2, 5.4, 5.5)
-        run: python scripts/probes/run.py --runs 50 --json probes-${{ matrix.os }}.json
-      - uses: actions/upload-artifact@v4
-        with:
-          name: probes-${{ matrix.os }}
-          path: probes-${{ matrix.os }}.json
 
   box:
     # The box script's setup end to end (packages, sources, SQLite amalgamations from the mirror, the
@@ -72,7 +49,7 @@ jobs:
     env:
       W: ${{ github.workspace }}/../placemat-work
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: setup
         run: scripts/box.sh setup
       - name: machine overlay
@@ -100,7 +77,7 @@ jobs:
           cp "$W/machine.toml" box-out/ 2> /dev/null || true
           cp -r "$W/ci" box-out/ 2> /dev/null || true
           cp "$W/cg/cg.tsv" box-out/ 2> /dev/null || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: box
