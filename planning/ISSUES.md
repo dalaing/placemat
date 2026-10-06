@@ -197,7 +197,7 @@ Besides the data setting, a large buffer's placement is decided by where the all
 3. **Reconcile the two harnesses** (timed): win.k's and chains.k's window cases both whole-script and in fresh processes, with bases logged, comparing set-up allocations, buffer sizes and Amber versions.
 4. **The region hint** in Amber's hook (in the fork, under its licence), its per-machine calibration, unhinted rounds; validate on the windows: paired spread, natural times reproduced at hinted bases, refusal rates per population.
 5. **Fingerprints and case marks** (`placemat_mark`, block logs kept); the **isolation contrast**; **case order** (opt-in).
-6. **Other platforms and projects:** whether region bases repeat on Linux (the CI probes, `scripts/probes/run.py`, answer this on x86-64 and arm64; on macOS arm64 a plain 1 GB mapping shows the same lottery as Amber) (if not, the hint is the only tool); zstd's two-speed scatter (history, or core scheduling, P011).
+6. **Other platforms and projects:** whether region bases repeat on Linux (answered by the CI probes: on Linux x86-64 and arm64 a 1 GB mapping's base never repeats, always 2 MB-aligned, so the covariate is unavailable and the hint is the only tool; on macOS arm64 a plain 1 GB mapping shows the same lottery as Amber; still to measure: whether the base matters for speed on Linux) (if not, the hint is the only tool); zstd's two-speed scatter (history, or core scheduling, P011).
 
 ### P014
 **Stack placement: a third layout axis beside code and heap** · research · designed (DESIGN §5.5); to build after DESIGN.md's plan (user, 2026-10-06)
@@ -207,7 +207,7 @@ Where the stack starts moves every frame and local array; it is set by the bytes
 **Evidence.** Nothing measured yet. placemat moves the stack by accident today: the stock slot lacks the data method's six to eight variables, `PLACEMAT_CASES` changes between batches and the binary's path carries the pad's tag, so the initial stack pointer differs by about 290 bytes between the stock slot and the others and by tens between settings and pads. Linux randomises the offset within 8 KB on x86-64.
 
 **To do**, in order:
-1. **Measure each platform's randomisation** (`scripts/probes/run.py`; done for macOS arm64: not randomised within a page, moving in 8-byte steps with the environment's size; Linux x86-64 and arm64 in CI; macOS arm64, Linux arm64 in the VM, x86 on the box): `argv`'s and a local's address over many executions per environment size.
+1. **Measure each platform's randomisation** (`scripts/probes/run.py`; done: macOS arm64 not randomised within a page, moving in 8-byte steps with the environment's size; Linux x86-64 and arm64 randomised within a page (39-50 distinct offsets in 50 executions), so there the stack is only recorded; macOS arm64, Linux arm64 in the VM, x86 on the box): `argv`'s and a local's address over many executions per environment size.
 2. **Hold the block constant:** `PLACEMAT_STACK_PAD` per execution, `env -i` on targets; check with the data methods' `argv` log.
 3. **Record** the offset as a run covariate (reported, not adjusted).
 4. **Vary it** where it is not randomised (contrast-only stack slots, `--stack`), and run a null run with it on Lua, SQLite and Amber.
