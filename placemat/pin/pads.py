@@ -64,6 +64,7 @@ class Plan:
     line_crossings: list[tuple[str, int, int]]      # (function, loop start, loop end)
     counts: dict                                     # loops / spans / lines considered
     notes: list[str] = dataclasses.field(default_factory=list)
+    unavoidable: list[tuple[str, int, int]] = dataclasses.field(default_factory=list)   # loops longer than the boundary
 
     @property
     def pad_bytes(self) -> int:
@@ -93,7 +94,9 @@ class Plan:
         return (f"{len(self.entries)} functions, {len(self.pads)} pads, {self.pad_bytes} pad bytes; "
                 f"residual crossings: {len(self.loop_crossings)} of {self.counts['loops']} small loops, "
                 f"{len(self.span_crossings)} of {self.counts['spans']} hot spans, "
-                f"{len(self.line_crossings)} of {self.counts['lines']} hottest loops across a line")
+                f"{len(self.line_crossings)} of {self.counts['lines']} hottest loops across a line"
+                + (f"; {len(self.unavoidable)} small loops longer than the boundary cross wherever placed"
+                   if self.unavoidable else ""))
 
     def to_json(self) -> dict:
         d = dataclasses.asdict(self)
@@ -107,7 +110,7 @@ class Plan:
         tup = lambda xs: [tuple(x) for x in xs]
         return cls([Entry(**e) for e in d["entries"]], d["boundary"], d["align"], d["cost"],
                    tup(d["loop_crossings"]), tup(d["span_crossings"]), tup(d["line_crossings"]), d["counts"],
-                   list(d.get("notes", [])))
+                   list(d.get("notes", [])), tup(d.get("unavoidable", [])))
 
 
 def pad_source(plan: Plan, note: str = "") -> str:
@@ -193,9 +196,14 @@ def pads(binary, order, boundary: int = 4096, align: int = 16, max_loop: int = 2
             size[n] = F[n].size
         size[n] = -(-size[n] // U) * U
     lo: dict[str, list[tuple[int, int]]] = {n: [] for n in names}
+    unavoidable = []                        # longer than the boundary: they cross wherever they are placed
     for l in (loops if loops is not None else B.loops(binary, max_loop)):
         if l.func in lo and l.end - l.start <= max_loop:
-            lo[l.func].append((l.start - F[l.func].start, l.end - F[l.func].start))
+            s, e = l.start - F[l.func].start, l.end - F[l.func].start
+            if e - s > P:
+                unavoidable.append((l.func, s, e))
+            else:
+                lo[l.func].append((s, e))
 
     def cost_loops(n, x):
         return sum(1 for s, e in lo[n] if (x + s) // P != (x + e - 1) // P)
@@ -266,7 +274,7 @@ def pads(binary, order, boundary: int = 4096, align: int = 16, max_loop: int = 2
         notes += problems
     plan = Plan(entries, P, U, total, lc, sc, hc,
                 {"loops": sum(len(v) for v in lo.values()), "spans": sum(1 for n in names if n in spans),
-                 "lines": sum(1 for n in names if n in hot64)}, notes)
+                 "lines": sum(1 for n in names if n in hot64), "unavoidable": len(unavoidable)}, notes, unavoidable)
     if out_order:
         Path(out_order).write_text(order_text(plan.order(), linker or binary))
     if out_c:

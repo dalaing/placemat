@@ -166,6 +166,7 @@ class Builder:
         self.platform = build_platform(cfg)
         self.fmt = "macho" if ("Darwin" in self.platform) else "elf"    # the binaries' format, for order files
         self.warnings: list[str] = []
+        self.notes: list[str] = []          # facts about the builds that are not problems
 
     # ---- arms ------------------------------------------------------------------------------------
 
@@ -242,6 +243,10 @@ class Builder:
             if plan.loop_crossings or plan.span_crossings:
                 self.warnings.append(f"{arm.name} {tag}: pin pads left {len(plan.loop_crossings)} loop and "
                                      f"{len(plan.span_crossings)} span crossings")
+            if plan.unavoidable and not any(w.startswith(f"{arm.name}: ") and "longer than the boundary" in w
+                                            for w in self.notes):
+                self.notes.append(f"{arm.name}: {len(plan.unavoidable)} small loops are longer than the boundary "
+                                  f"({self.cfg.boundary} B) and cross it wherever placed")
         elif arm.order:
             built = self._link(arm, pad, hooked, tag, lead + arm.order.read_text().splitlines(),
                                arm.pin_source.read_text() if arm.pin_source else None)

@@ -4,13 +4,16 @@ placemat sets CC (and CXX) to a shim that runs `python3 -m placemat.cc`, with th
 PLACEMAT_REAL_CC (PLACEMAT_REAL_CXX for C++). Every compile gets PLACEMAT_CFLAGS (and, for a pinned arm,
 -falign-functions=$PLACEMAT_ALIGN, plus -ffunction-sections on ELF). A link (no -c, -S, -E or -M*) also
 gets, in this order: the code-axis pad source as the first input, so the pad is linked before the code
-under study; the pinned arm's pin pads; the order file; and PLACEMAT_LDFLAGS. Everything else passes
+under study; the pinned arm's pin pads; the order file (for GNU ld before binutils 2.43, which lacks
+--section-ordering-file, the link uses lld when installed); and PLACEMAT_LDFLAGS. Everything else passes
 through unchanged, so make, CMake and Meson builds work as long as they honour CC.
 """
 from __future__ import annotations
 
 import os
 import shlex
+import shutil
+import subprocess
 import sys
 
 
@@ -28,6 +31,15 @@ def _gnu_order(order: str) -> str:
         with open(out, "w") as f:
             f.write(order_text(names, "gnu"))
     return out
+
+
+def _gnu_ordering(real: str) -> bool:
+    """Whether the compiler's GNU ld takes --section-ordering-file (binutils 2.43 and later)."""
+    try:
+        ld = subprocess.run(shlex.split(real) + ["-print-prog-name=ld"], capture_output=True, text=True).stdout.strip()
+        return "--section-ordering-file" in subprocess.run([ld or "ld", "--help"], capture_output=True, text=True).stdout
+    except OSError:
+        return False
 
 
 def command(argv: list[str], cxx: bool = False) -> list[str]:
@@ -49,8 +61,13 @@ def command(argv: list[str], cxx: bool = False) -> list[str]:
             tail.append(f"-Wl,-order_file,{order}")
         elif any("lld" in a for a in args + extra) or os.environ.get("PLACEMAT_LINKER") == "lld":
             tail.append(f"-Wl,--symbol-ordering-file,{order}")
-        else:                                       # GNU ld: a section-ordering file of .text.<name> sections
+        elif _gnu_ordering(real):                   # GNU ld: a section-ordering file of .text.<name> sections
             tail.append(f"-Wl,--section-ordering-file,{_gnu_order(order)}")
+        elif shutil.which("ld.lld"):                # an older GNU ld (before binutils 2.43): link with lld
+            tail += ["-fuse-ld=lld", f"-Wl,--symbol-ordering-file,{order}"]
+        else:
+            sys.exit("placemat-cc: this GNU ld cannot order functions (--section-ordering-file needs binutils "
+                     "2.43 or later) and no lld was found: install lld, or set PLACEMAT_LINKER=lld with an lld link")
     tail += shlex.split(os.environ.get("PLACEMAT_LDFLAGS", ""))
     if first and cxx:                          # a C file in a C++ link: compile it as C
         first = ["-x", "c"] + first + ["-x", "none"]

@@ -155,6 +155,8 @@ def markdown(raw: dict, C: dict | None = None, title: str | None = None) -> str:
               + (f"; batch {pt['batch']} (pads {pt['pads'][0]}-{pt['pads'][1]}, {pt['cases']} case{'s' * (pt['cases'] != 1)}) stopped after "
                  f"{pt['rounds']} of {raw['rounds']} rounds, and its timings are kept in the raw file but not analysed"
                  if pt else "") + (". No batch finished, so no case can be analysed." if m == 0 else ".")]
+    if raw.get("build_notes"):
+        L += ["", "**Build notes:** " + "; ".join(raw["build_notes"][:10]) + "."]
     if raw.get("build_warnings"):
         L += ["", "**Build warnings:** " + "; ".join(raw["build_warnings"][:10])
               + (f" (and {len(raw['build_warnings']) - 10} more)" if len(raw["build_warnings"]) > 10 else "") + "."]

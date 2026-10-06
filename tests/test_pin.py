@@ -27,7 +27,7 @@ from placemat import pin
 from placemat.pin import profile as PR
 from placemat.pin import select as S
 from placemat.pin import order as O
-from placemat.pin.pads import pads, pad_source, is_pad
+from placemat.pin.pads import Plan, pads, pad_source, is_pad
 from placemat.pin.verify import verify
 
 from .test_binary import HOT, PINME, ToolchainCase, toolchains, write_order
@@ -288,6 +288,18 @@ class PadSearchTests(unittest.TestCase):
                 pads("bin", ["g", "f"], boundary=128)
             plan = pads("bin", ["f", "g"], boundary=128, strict=False)
             self.assertEqual(len(plan.entries), 2)
+
+    def test_loop_longer_than_boundary_is_unavoidable(self):
+        funcs = [("f", 0x1000, 48), ("g", 0x1030, 224)]
+        loops = [B.Loop("f", 0x1000 + 20, 0x1000 + 44),
+                 B.Loop("g", 0x1030 + 8, 0x1030 + 8 + 160)]       # 160 B, over a 128 B boundary: crosses anywhere
+        with self.fake(funcs, loops):
+            plan = pads("bin", ["f", "g"], boundary=128, align=16)
+        self.assertEqual(plan.loop_crossings, [])                   # not counted as a residual crossing
+        self.assertEqual(plan.unavoidable, [("g", 8, 168)])
+        self.assertEqual(plan.counts["unavoidable"], 1)
+        self.assertIn("longer than the boundary", plan.summary())
+        self.assertEqual(Plan.from_json(json.loads(json.dumps(plan.to_json()))).unavoidable, plan.unavoidable)
 
     def test_pad_source(self):
         funcs = [("f", 0x1000, 48), ("g", 0x1030, 80)]

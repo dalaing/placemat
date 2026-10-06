@@ -282,7 +282,8 @@ class Runner:
                    "data_method": cfg.data_method if D.data != "none" else "none",
                    "log": {**self.log, "runs": self.nruns, "date": time.strftime("%Y-%m-%d %H:%M:%S")},
                    "geometry": self.geometry(bins) if complete else {},
-                   "build_warnings": list(getattr(self.B, "warnings", []))}
+                   "build_warnings": list(getattr(self.B, "warnings", [])),
+                   "build_notes": list(getattr(self.B, "notes", []))}
             out.parent.mkdir(parents=True, exist_ok=True)
             tmpf = out.with_suffix(".tmp")
             tmpf.write_text(json.dumps(raw))

@@ -35,6 +35,19 @@ class CommandTests(unittest.TestCase):
             self.assertTrue(any("/p/o" in x for x in link))
             self.assertLess(link.index("/p/pad.c"), link.index("a.o"))
 
+    def test_old_gnu_ld_falls_back_to_lld(self):
+        env = {"PLACEMAT_REAL_CC": "gcc", "PLACEMAT_ORDER_FILE": "/p/o"}
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(cc.sys, "platform", "linux"):
+            with mock.patch.object(cc, "_gnu_ordering", lambda real: False), \
+                    mock.patch.object(cc.shutil, "which", lambda n: "/usr/bin/ld.lld" if n == "ld.lld" else None):
+                link = cc.command(["-o", "t", "a.o"])
+                self.assertIn("-fuse-ld=lld", link)
+                self.assertIn("-Wl,--symbol-ordering-file,/p/o", link)
+            with mock.patch.object(cc, "_gnu_ordering", lambda real: False), \
+                    mock.patch.object(cc.shutil, "which", lambda n: None):
+                with self.assertRaises(SystemExit):
+                    cc.command(["-o", "t", "a.o"])
+
 
 @unittest.skipUnless(shutil.which("make") and shutil.which("cc"), "needs make and cc")
 class MakeProjectTests(unittest.TestCase):
