@@ -2,8 +2,9 @@
      pmustat NAME=TYPE:CONFIG ... -- COMMAND [ARGS...]
    TYPE 0 = PERF_TYPE_HARDWARE, 4 = PERF_TYPE_RAW; CONFIG in hex. The child waits on a pipe while the
    counters are opened on it (counting from its exec, user space only), then execs COMMAND. Prints
-   "NAME count" (or "NAME error errno") per event on stderr after the child exits, and exits with its
-   status. Needs perf_event_paranoid <= 2 (Ubuntu's default is 4). */
+   "NAME count" (or "NAME error errno") per event on stderr after the child exits, then "wall_ns N"
+   (from releasing the child to its exit) and "user_us N" (its user CPU time), and exits with its status.
+   Counting needs perf_event_paranoid <= 2 (Ubuntu's default is 4); the times are always reported. */
 #define _GNU_SOURCE
 #include <errno.h>
 #include <stdio.h>
@@ -13,8 +14,10 @@
 #ifdef __linux__
 #include <linux/perf_event.h>
 #include <sys/ioctl.h>
+#include <sys/resource.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #define MAXEV 16
@@ -53,10 +56,14 @@ int main(int argc, char **argv) {
         fd[k] = (int)syscall(SYS_perf_event_open, &a, pid, -1, -1, 0);
         if (fd[k] < 0) fd[k] = -errno;
     }
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
     if (write(go[1], "x", 1) != 1) return 2;
     close(go[1]);
     int st = 0;
-    waitpid(pid, &st, 0);
+    struct rusage ru;
+    wait4(pid, &st, 0, &ru);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
     for (int k = 0; k < n; k++) {
         if (fd[k] < 0) { fprintf(stderr, "%s error %d\n", names[k], -fd[k]); continue; }
         long long v = 0;
@@ -64,6 +71,9 @@ int main(int argc, char **argv) {
         fprintf(stderr, "%s %lld\n", names[k], v);
         close(fd[k]);
     }
+    fprintf(stderr, "wall_ns %lld\nuser_us %lld\n",
+            (long long)(t1.tv_sec - t0.tv_sec) * 1000000000LL + (t1.tv_nsec - t0.tv_nsec),
+            (long long)ru.ru_utime.tv_sec * 1000000LL + ru.ru_utime.tv_usec);
     return WIFEXITED(st) ? WEXITSTATUS(st) : 1;
 }
 #else
