@@ -8,16 +8,20 @@ Supporting reports from those runs are copied into [amber-validation/](amber-val
 
 | # | kind | title | status |
 |---|---|---|---|
-| [P001](#p001) | design | placemat itself: shape, licence, steps | in progress: repo set up; prior-art survey running |
-| [P002](#p002) | tooling | the joint code-and-data layout stage, and what building it taught | built (in the Amber fork's `pbt/`); to extract |
-| [P003](#p003) | tooling | pinning hot code: order file, alignment, pads, and its pitfalls | prototyped (Amber, Mach-O only); to extract and generalise |
-| [P004](#p004) | design | data-layout adapters: a malloc interposer and a hook header for custom allocators | designed; the Amber hook exists as a fork-only patch |
-| [P005](#p005) | tooling | make the stage faster | to do |
-| [P006](#p006) | platform | Linux support: ELF analysis, linker options, the stage on shared CI runners, Valgrind | to do |
+| [P001](#p001) | design | placemat itself: shape, licence, steps | in progress: extracted (step 3, 2026-10-05; [PROGRESS.md](PROGRESS.md)); Amber re-validation running |
+| [P002](#p002) | tooling | the joint code-and-data layout stage, and what building it taught | extracted: `placemat/{design,stats,analysis,runner,report,bench,build}.py`; re-validation running |
+| [P003](#p003) | tooling | pinning hot code: order file, alignment, pads, and its pitfalls | extracted and generalised (`placemat/pin/`, `binary.py`; Mach-O and ELF, ld64/lld/GNU ld); reproduces Amber's stored plans |
+| [P004](#p004) | design | data-layout adapters: a malloc interposer, a colouring allocator for allocator APIs, and a hook header for custom allocators | built (`placemat/data/`: placemat.h, colouring allocator, interposer; macOS and Linux); Amber's adapter in the fork's `pbt/placemat/` |
+| [P005](#p005) | tooling | make the stage faster | started: affected-case selection (`placemat affected`), multi-arm runs, dimensioning advice in reports |
+| [P006](#p006) | platform | Linux support: ELF analysis, linker options, the stage on shared CI runners, Valgrind | started: ELF analysis and pinning tested on Linux arm64 (Lima); boundaries unmeasured |
 | [P007](#p007) | platform | macOS measurement tools beyond sampling | to explore |
-| [P008](#p008) | platform | a Linux arm64 VM on the Mac, for Valgrind on the same CPU | to explore |
-| [P009](#p009) | tooling | compare hot-code ordering strategies on the system under test | idea (user, 2026-10-05) |
-| [P010](#p010) | validation | validate placemat on zstd, SQLite and Lua | chosen (user, 2026-10-05); after extraction |
+| [P008](#p008) | platform | a Linux arm64 VM on the Mac, for Valgrind on the same CPU | in use: a Lima VM (`placemat`) runs the Linux tests (P006) and Cachegrind (P010, SQLite) |
+| [P009](#p009) | tooling | compare hot-code ordering strategies on the system under test | first result on Amber: five strategies indistinguishable on M2 (−0.4% to −1.8% against stock; all within noise of c3; `examples/amber/P009.md`); repeat quietly, then on x86 (P006) |
+| [P010](#p010) | validation | validate placemat on zstd, SQLite and Lua | in progress: adapters and surveys under way (`examples/`) |
+| [P011](#p011) | design | threaded benchmarks: thread count, heterogeneous cores, core placement | designed (DESIGN §5.8); nothing built (user, 2026-10-05) |
+| [P012](#p012) | tooling | the noise gate: a sturdier probe, a continuous noise record, a looser go-ahead | built 2026-10-07: all seven items, plus the orphaned-lock fix and the probe on a `[target]` ([PROGRESS.md](PROGRESS.md)) |
+| [P013](#p013) | research | heap placement: the region lottery and heap history | designed (DESIGN §5.4, §5.7); not built |
+| [P014](#p014) | research | stack placement: a third layout axis beside code and heap | designed (DESIGN §5.5); not built; first measure each platform's randomisation |
 
 ---
 
@@ -31,10 +35,10 @@ Shape:
 2. **Code-layout adapters:** source padding (a generated, sized, unused function linked first; needs only a flags hook in the build); linker shuffling where the linker has it (lld `--shuffle-sections` limited to `.text*` as a code axis; mold's shuffles data too, so it is a combined axis only); pinning (P003); binary analysis for Mach-O and ELF (the loop-crossing scanner, "culprits": which loops cross a boundary only in the slow variants).
 3. **Data-layout adapters:** P004.
 
-Steps: (1) prior-art survey → `planning/PRIOR-ART.md` (running); (2) a short design document in `planning/`, with the hook header and the benchmark protocol, Amber as first user; (3) extract from the Amber fork's `pbt/` (`layouts.py`, `ldesign.py`, the stage in `evidence.py`, the order-file tools `pads.py`/`pick.py`/`order.py`/`prof2.py`, `loops4k.py`, `samefn.py`), keeping Amber's validations (P002) as the regression test: Amber re-validated under placemat's general rules, with the same verdicts (DESIGN §10). Linux support (P006) can make its GitHub Actions run placemat's CI. Fold in P005's speed-ups where natural. Possibly the pinning half as a separate subcommand or tool.
+Steps: (1) prior-art survey → `planning/PRIOR-ART.md` (running); (2) a short design document in `planning/`, with the hook header and the benchmark protocol, Amber as first user; (3) extract from the Amber fork's `pbt/` (`layouts.py`, `ldesign.py`, the stage in `evidence.py`) and from `planning/amber-validation/tools/` (the order-file tools `pads.py`/`pick.py`/`order.py`/`prof2.py`, also on the fork's `fusion` branches; `loops4k.py`, `samefn.py`), keeping Amber's validations (P002) as the regression test: Amber re-validated under placemat's general rules, against pass criteria on verdicts rather than the same numbers (DESIGN §10). Linux support (P006) can make its GitHub Actions run placemat's CI. Fold in P005's speed-ups where natural. Possibly the pinning half as a separate subcommand or tool.
 
 ### P002
-**The joint code-and-data layout stage, and what building it taught** · tooling · built in the Amber fork (`pbt/evidence.py --design`, `pbt/ldesign.py`, `pbt/layouts.py`), validated 2026-10-04; to extract · was Amber A266 + A267
+**The joint code-and-data layout stage, and what building it taught** · tooling · built in the Amber fork (`pbt/evidence.py --design`, `pbt/ldesign.py`, `pbt/layouts.py`), validated 2026-10-04; extracted 2026-10-05 (re-validation running) · was Amber A266 + A267
 
 **What it does.** Re-times the cases a normal paired run flagged, across designed layout variants of both builds, and says whether a difference is a change, code placement, data placement or run-to-run noise.
 - *Code axis:* an unused padding function linked first, sizes from a golden-ratio sequence covering the 4 KB period and the 64-byte phase (12 pads: largest gap mod 4096 620 B against 341 for even spacing; 12 of 16 phases mod 64, all 4 mod 16). The plastic-number R2 sequence was rejected: its first coordinate is close to 3/4, so the first dozen pads fell in four clusters.
@@ -56,7 +60,7 @@ Steps: (1) prior-art survey → `planning/PRIOR-ART.md` (running); (2) a short d
 7. *main against main is not a perfect null* when base and branch run from different worktree paths.
 
 ### P003
-**Pinning hot code: order file, alignment, pads, and its pitfalls** · tooling · prototyped on Amber (Mach-O/arm64 only), 2026-10-04; to extract and generalise · was the tooling part of Amber A268
+**Pinning hot code: order file, alignment, pads, and its pitfalls** · tooling · prototyped on Amber (Mach-O/arm64 only), 2026-10-04; extracted and generalised 2026-10-05 (`placemat/pin/`, `binary.py`) · was the tooling part of Amber A268
 
 **Procedure.** (1) Profile the benchmark set and re-attribute samples by address: macOS `sample` strips LTO suffixes (`_o8.1005` → `o8`) and lumps stubs past `__text` into the last function. (2) Pick hot functions until each benchmark set reaches ~95% of in-binary samples (Amber: 101 functions, 99.3% / 95.2%, 211 KB of 618 KB). (3) Group them C3-style (each behind its heaviest caller; clusters capped at 16 KB; skip a merge when the caller's cluster is under 1/8 as dense; sort clusters by density). (4) Link with `-Wl,-order_file` (ld64) and `-falign-functions=16`. (5) Insert pad functions, listed in the order file, sized by an exact search over the start address mod 4096 so that no loop ≤256 B in a listed function and no hot entry span (entry to the last hot sampled offset under 1 KB) crosses 4 KB. (6) Verify after linking (`nm`, the loop scanner), then time.
 
@@ -68,14 +72,15 @@ Steps: (1) prior-art survey → `planning/PRIOR-ART.md` (running); (2) a short d
 3. *Linker warnings get hidden:* the project's build sent stderr to /dev/null, hiding "can't find … order_file entry"; always verify placement with `nm`.
 4. *Renamed statics* (`.NNN` suffixes) change numbers from build to build; list plain names and verify.
 5. *Edits inside the pinned region shift it until the next pad:* regenerate pads per build (the pads belong to the build, not the source).
-6. *Flags that seem to align loops may not exist:* Apple clang 17's LLVM has no `-align-loops`, ld64 silently ignores unknown `-Wl,-mllvm` options, and `-align-all-nofallthru-blocks=6` / `-align-all-blocks=4` cost 35-40% more text and still left most crossings: always check that the binary changed.
+6. *The preserved alignment can change between versions:* on Amber 2.7.2 ld64 kept function addresses mod 64, not 16, so 16-byte pads left 39 hot loops crossing; plan with the alignment the linker preserves (`[build] pin_align`) and let the check after every link catch misplaced pads (2026-10-06). Also, Amber's build.sh hides ld64's warnings both with `2>/dev/null` and with `-w`, and ld-1230 is silent when every entry applies: count applied entries with `nm` (placemat's check after linking does).
+7. *Flags that seem to align loops may not exist:* Apple clang 17's LLVM has no `-align-loops`, ld64 silently ignores unknown `-Wl,-mllvm` options, and `-align-all-nofallthru-blocks=6` / `-align-all-blocks=4` cost 35-40% more text and still left most crossings: always check that the binary changed.
 
 To generalise: ELF and lld `--symbol-ordering-file` / GNU ld section ordering (P006); profile import from perf as well as `sample`/xctrace; boundaries per architecture (4 KB on M2; 32/64-byte windows on x86, to be measured).
 
 ### P004
-**Data-layout adapters: a malloc interposer and a hook header for custom allocators** · design · designed 2026-10-05; the Amber hook exists as a fork-only patch · from Amber A277 (point 3), with lessons from Amber A269 and A271
+**Data-layout adapters: a malloc interposer, a colouring allocator for allocator APIs, and a hook header for custom allocators** · design · built 2026-10-05 (`placemat/data/`; DESIGN §7); Amber's adapter in the fork's `pbt/placemat/` · from Amber A277 (point 3), with lessons from Amber A269 and A271
 
-**Why two adapters.** Projects on the system allocator can be coloured from outside: a `malloc` interposer (`DYLD_INSERT_LIBRARIES` / `LD_PRELOAD`) that offsets large allocations by a colour. Custom allocators cannot: Amber's buddy allocator takes memory with `mmap` and aligns each block to its own size, so every payload ≥64 KB lands at the same offset mod 16 KB in every run (structural L1 set aliasing); shifting the `mmap` region moves every block equally and changes nothing. They need an in-allocator hook.
+**Why three adapters.** Projects on the system allocator can be coloured from outside: a `malloc` interposer (`DYLD_INSERT_LIBRARIES` / `LD_PRELOAD`) that offsets large allocations by a colour. Projects with an allocator API (zstd, SQLite, Lua) can install placemat's colouring allocator (the interposer's core) through it, which also works where the interposer cannot (SQLite on macOS uses `malloc_zone_malloc`). Custom allocators cannot: Amber's buddy allocator takes memory with `mmap` and aligns each block to its own size, so every payload ≥64 KB lands at the same offset mod 16 KB in every run (structural L1 set aliasing); shifting the `mmap` region moves every block equally and changes nothing. They need an in-allocator hook.
 
 **Colours and steps** (user, 2026-10-05: a general tool needs both). A *colour* is one constant offset for every coloured allocation (moves data relative to page boundaries, uncoloured allocations, statics, the stack). A *step* gives each block its own offset (moves coloured buffers relative to each other: their set conflicts): hashed by default (block k's offset from a mixing hash of the variant's seed and k, with k on one fixed granule from one per-process base), or linear (s·(k+1)), which is periodic in Δk and, over per-class slot indices, cannot separate blocks of different sizes. Block k's offset: the colour plus its step offset. Each pad is timed with no offset, with its colour and with its step. Amber needed steps only (its buddy allocator gives every large block the same offset, so a colour moves them all equally); other allocators and page-boundary-sensitive workloads need colours. Amber follows the same rules and is re-validated under them (user, 2026-10-05). DESIGN §5.3.
 
@@ -92,9 +97,9 @@ Valgrind client requests (`VALGRIND_MALLOCLIKE_BLOCK` / `VALGRIND_FREELIKE_BLOCK
 5. Check the project's alignment guarantee with its own tooling (Amber: a `-DAMBER_ALIGNCHECK` build reporting any unaligned payload).
 
 ### P005
-**Make the stage faster** · tooling · to do (user, 2026-10-05: "they take hours") · was Amber A276
+**Make the stage faster** · tooling · started 2026-10-05 (affected-case selection, multi-arm runs, dimensioning advice); user, 2026-10-05: "they take hours" · was Amber A276
 
-Builds are cheap (~8 s per variant: one file recompiled and a relink); timing dominates (~200 cases × up to 24-36 variants × rounds; 12-50 s per case; 1-3 h per comparison). Shortcuts, by payoff:
+Builds are cheap (~8 s per variant: one file recompiled and a relink); timing dominates (~200 cases × up to 24-36 variants × rounds; 12-50 s per case; an estimated 40 min to 3 h per comparison). Shortcuts, by payoff:
 1. **Time only affected cases** (needs pinned builds, P003): unchanged hot functions don't move, so with a "which functions' machine code changed" tool (Amber's `samefn.py`) and the profile's case → function map, skip or spot-check cases whose hot functions are identical and unmoved. Typical change: 200 → 10-30 cases. Also an argument for pinning in any project: it makes change benchmarking cheap, not just stable.
 2. **Drop axes that cannot matter:** colouring built in (P004) removes the data axis (one variant per pad instead of two or three); changes that leave the binary unchanged (scripts in the project's own language, docs, tests) skip the code axis (detect from the diff; caveat: script changes can alter the allocation sequence, which colouring largely neutralises).
 3. **Multi-arm runs:** base, P1, P2, P3 in one rotation, timing the base once per round (n+1 instead of 2n executions).
@@ -105,7 +110,7 @@ Builds are cheap (~8 s per variant: one file recompiled and a relink); timing do
 Not helpful: timing cases in parallel on different cores (shared L2 and memory bandwidth). Expected: a typical change check from hours to ~10-20 min; research comparisons about halved.
 
 ### P006
-**Linux support** · platform · to do · from Amber A272 (points 1, 2, 5) and A274
+**Linux support** · platform · started 2026-10-05 (ELF analysis and pinning tested in the VM) · from Amber A272 (points 1, 2, 5) and A274
 
 1. **The stage on Linux:** does source padding survive GCC/clang LTO and the GNU/lld links; ELF binary analysis (objdump/nm) for the loop scanner, culprits and pads; lld `--symbol-ordering-file` or GNU ld section ordering (`-ffunction-sections`). lld offers ready-made layout perturbation: `--shuffle-sections` (2020), which takes a section glob and so can be limited to `.text*` (a code axis), and `--randomize-section-padding` (lld 20, December 2024, "to control measurement bias in A/B experiments"), which pads code and data sections alike with no filter as merged (a combined axis only). Use them where they fit, and credit them (PRIOR-ART.md).
 2. **Which code boundaries matter on x86** (32/64-byte fetch windows, 4 KB) and on Linux arm64, so the pad rule is per-architecture.
@@ -124,16 +129,16 @@ No Valgrind on macOS arm64 (and, as far as we know, no DynamoRIO or Pin). Option
 - **Heap tools** (`leaks`, `heap`, `vmmap`, `malloc_history`, Allocations) track malloc only; custom allocators are one mapped region to them, so P004's `placemat_log_alloc` is the substitute.
 
 ### P008
-**A Linux arm64 VM on the Mac** · platform · to explore · from Amber A274 (point 1)
+**A Linux arm64 VM on the Mac** · platform · in use 2026-10-05 (Lima VM `placemat`) · from Amber A274 (point 1)
 
 Apple's Virtualization framework (via UTM, Lima, OrbStack or Docker) runs Linux arm64 lightly: Valgrind on the same CPU (P006 point 4), and a cheap first step toward P006's Linux questions (arm64 rather than x86, but the same linkers). Caveats: a different toolchain and ABI (e.g. Linux's initial-exec thread-local storage is nearly free where macOS's is not); timing inside a VM is less trustworthy than bare metal, but instruction counts and allocation traffic are fine.
 
 ### P009
-**Compare hot-code ordering strategies on the system under test** · tooling · idea (user, 2026-10-05)
+**Compare hot-code ordering strategies on the system under test** · tooling · first result 2026-10-05: on Amber/M2 the strategies cannot be told apart (`examples/amber/P009.md`); idea (user, 2026-10-05)
 
 Different orderings of the hot set optimise different things; placemat could build each and present how they compare on the project being benchmarked. Candidates (most are options of BOLT's function reordering; names to be checked against BOLT's documentation): by hotness (execution count), by density (samples per byte), Pettis-Hansen (greedy merging along the heaviest call edges, 1990), C3/hfsort (each function behind its heaviest caller, Ottoni & Maher 2017), hfsort+ and CDSort (refinements), balanced partitioning (lld; aimed at startup and compression), per-benchmark clusters, and **random order as a control**. The pad rule (P003) applies after any of them.
 
-**The trap:** each pinned layout freezes its own luck (on Amber, each pinned build had a few cases ±5-10% off from where that layout happened to put them), so one build per strategy compares lucky draws. Measure each strategy averaged over layout: shift the whole ordered region through designed offsets (a pad in front of it, over the 4 KB period and the 64-byte phase) and, optionally, several equally good pad solutions; random order measured the same way is the baseline.
+**The trap:** each pinned layout freezes its own luck (on Amber, several pinned builds (B16, C, D) had a few cases ±5-10% off from where that layout happened to put them), so one build per strategy compares lucky draws. Measure each strategy averaged over layout: shift the whole ordered region through designed offsets (a pad in front of it, over the 4 KB period and the 64-byte phase) and, optionally, several equally good pad solutions; random order measured the same way is the baseline.
 
 **Report per strategy:** static (text and pad bytes; profile-weighted count of 4 KB and 16 KB pages spanned by hot code; crossings before padding) and measured (layout-averaged speed against stock; spread and layout-sensitive cases; per-case winners and losers).
 
@@ -153,3 +158,56 @@ Candidates (allocator APIs to be confirmed before relying on them):
 - **Lua or QuickJS**: small interpreters with allocator callbacks (`lua_newstate(lua_Alloc)`; `JS_NewRuntime2` with `JSMallocFunctions`): mainly a code-axis and ordering-strategy (P009) test, most interesting on x86 (P006), where interpreter loops are more front-end bound.
 
 **Chosen (user, 2026-10-05): zstd, SQLite and Lua.** Together they cover the data axis through an allocator API (zstd), both axes in a project with an established performance method to compare against (SQLite), and an interpreter for the code axis and ordering strategies (Lua). ngn/k stays a candidate (the closest relative to Amber). Each gets the lifecycle in DESIGN.md §3: a survey first, and only then fixes. They come after the extraction (P001 step 3), as placemat's first users after Amber; licences: zstd BSD/GPLv2 dual, SQLite public domain, Lua MIT, so their adapters can live in placemat's examples if they contain no project source beyond API use.
+
+### P011
+**Threaded benchmarks: thread count, heterogeneous cores, core placement** · design · designed in DESIGN §5.8; nothing built (user, 2026-10-05)
+
+Amber 2.6.0 brought threads and fusion in from upstream's experimental branch ("Big vectors now use all the cores, and small ones don't notice"), and upstream defaults to all cores: 8 on this M2, 4 performance and 4 efficiency, so an equal split leaves the efficiency cores as stragglers. Everything validated so far ran single-threaded (Amber's placemat config sets `AMBER_THREADS=1`), so the extraction's regression test (DESIGN §10) is unaffected; benchmarking newer Amber with threaded code is not.
+
+To do: thread count as part of a case (`name[T=…]`, `PLACEMAT_THREADS`); recommended counts (1 for attribution, the performance cores for threaded behaviour, the default only as its own experiment); core placement as a run covariate (the share of CPU time on performance cores; CPU time over wall time × T only as a diagnostic, since wall time is the response); the noise probe at the case's thread count; affinity on Linux (`taskset`, cpusets) so core placement can be fixed per execution; the hash-of-k covariate is unavailable under threads (allocation order varies). Consequences for P010: SQLite is built single-threaded, the Lua host is single-threaded and the zstd adapter leaves out the multi-threaded compressor, so none is affected yet.
+
+### P012
+**The noise gate: a sturdier probe, a continuous noise record, a looser go-ahead** · tooling · built 2026-10-07 (planned 2026-10-06, user)
+
+**Built (2026-10-07):** the probe times 21 readings and judges 1.2 × the interquartile range over the median (on a quiet M2 its worst reading was 8%, the old measure's 15%); the gate needs two passing readings 5 s apart; each batch records its epoch start, streak, `went_ahead` and both spreads; `placemat noiselog` (about 0.3 s of one core a reading, not the 0.13 s estimated below, since a reading now takes 21 timings) and the runner keeps its samples in the raw file; per-round and per-execution epoch times; reports mark noisy batches; the example configurations gate at 10%; the lock command runs under a guard so a killed run leaves no waiter; with a `[target]`, the probe runs on the target. DESIGN §8.3 and §11 item 3 describe it.
+
+**Evidence (2026-10-06, all 127 gated batches so far).** The gate takes one probe reading before each batch: 9 timings of a ~14 ms workload, spread = (second-slowest − second-fastest) / median, limit `max_noise` = 5%, going ahead after `wait` = 45 min. 26 batches (20%) passed within 2 minutes, 79 (62%) waited and then passed, 22 (17%) went ahead at the limit (12 of 45, 27%, since contention eased at midday). A pass is a snapshot: 37 of the 105 passing batches (35%) ended with the end-of-batch probe over 5% (c22: starts 2.4-2.6%, ends 10-11%). With the Mac otherwise idle (load ~2) the probe's median is steady (13.5-13.8 ms) while its spread jumps between 2% and 46% from one reading to the next: short stalls hitting two of the nine timings, not a busy machine (possibly the scheduler moving the probe between performance and efficiency cores). Locking the screen for an hour did not help (a2 batch 1 went ahead at 12.8%, load 1.6). Meanwhile the gate costs most of a run's wall clock: c22 timed for 96 s and waited 6,835 s; c12 134 s and 1,882 s.
+
+**To do:**
+1. **A sturdier probe:** more timings per reading, and the spread judged on the middle half (an interquartile measure), so one or two stalled timings do not fail it.
+2. **Two passes in a row:** require two passing readings a few seconds apart before going ahead, so a lucky snapshot in a noisy spell does not count.
+3. **Mark the batches in the report** that went ahead at the limit or ended over it, so their results are read with that in mind (also asked for by the zstd survey).
+4. **A continuous noise record** (`placemat noiselog`): one probe a minute, appended with an epoch timestamp, median, spread and load to `~/.cache/placemat/noise.jsonl`, running whenever timing is. About 0.13 s on one core a minute: a small, regular, timestamped disturbance whose own effect can be checked. It cannot be pinned to a core on macOS, so it measures the machine rather than exactly what the benchmark saw.
+5. **Round timestamps:** the raw data records only one probe time per batch (time of day, no date) and nothing per round or execution; record each round's start and end (epoch) so the noise record can be joined to the timings.
+6. **The join in `report` and `reanalyse`:** per batch and round, the noise samples taken during it; a batch marked noisy when they pass the limit, alongside the disturbed-round check from the timings (the finer tool, since a sample a minute cannot vouch for one short round).
+7. **Then loosen the go-ahead:** `max_noise` = 10% (or keep 5% with a much shorter wait), with the record and the per-batch marks carrying the weight the gate carries now.
+
+Not before the Amber regression finishes: the remaining runs (a2, then the d1, e1 and b1 reruns) keep the 5% gate so the pairs are timed under the same rule.
+
+### P013
+**Heap placement: the region lottery and heap history** · research · designed (DESIGN §5.4, §5.7); to build after DESIGN.md's plan (user, 2026-10-06)
+
+Besides the data setting, a large buffer's placement is decided by where the allocator's regions land in each execution (the region lottery) and by which block of a region it gets (heap history). DESIGN §5.4 designs both as factors placemat records, pairs, holds fixed or varies, and §5.7 their analysis; the evidence and reasoning are in [amber-validation/heap-and-stack.md](amber-validation/heap-and-stack.md).
+
+**Evidence.** Amber's window kernels run at a speed set by the region's base (0x300000000 about 1.45× slow on s_msum100 at the stock setting; three populations of bases; repeatable to ±0.5 ms; above the page, mechanism unexplained), and their whole-script runs are slow in 7-13 of 20 processes against at most 1 of 20 in fresh processes (the amber-fusion work, `amber-fusion/planning/fusion-phaseb.md`). In the regression, c12's false *change* on five window cases was a tail draw of the lottery (arm swaps: the interval calibrated; about 6% of runs of the window group show one), and the run test missed the lottery because one-variant groups floor its p near 1/35.
+
+**To do**, in order:
+1. **Analysis, on existing raw files** (no timing): the run test by kind; standardisation to the natural mix (tests, anchors, disturbed-round detector), both mixes and Fisher's test; `placemat reanalyse --swaps N`; then choose the location estimator by arm swaps on every null run whose arms share binaries (a1, a2, c11, c12), checking real changes (c21, c22, b1, b2) and that no new code flags appear.
+2. **Runner:** record the warm-up executions' bases; keep each case's predecessors across batches (`keep_prefix`) and same-length comments for dropped `k-out` lines; `check`'s report notes its different history.
+3. **Reconcile the two harnesses** (timed): win.k's and chains.k's window cases both whole-script and in fresh processes, with bases logged, comparing set-up allocations, buffer sizes and Amber versions.
+4. **The region hint** in Amber's hook (in the fork, under its licence), its per-machine calibration, unhinted rounds; validate on the windows: paired spread, natural times reproduced at hinted bases, refusal rates per population.
+5. **Fingerprints and case marks** (`placemat_mark`, block logs kept); the **isolation contrast**; **case order** (opt-in).
+6. **Other platforms and projects:** whether region bases repeat on Linux (the CI probes, `scripts/probes/run.py`, answer this on x86-64 and arm64; on macOS arm64 a plain 1 GB mapping shows the same lottery as Amber) (if not, the hint is the only tool); zstd's two-speed scatter (history, or core scheduling, P011).
+
+### P014
+**Stack placement: a third layout axis beside code and heap** · research · designed (DESIGN §5.5); to build after DESIGN.md's plan (user, 2026-10-06)
+
+Where the stack starts moves every frame and local array; it is set by the bytes of arguments and environment above it and by the stack's randomisation (Mytkowicz et al. 2009 moved results by several percent through the environment's size alone). DESIGN §5.5 designs it: hold the block above the stack constant, record the offset, and vary it only where the platform does not already randomise it.
+
+**Evidence.** Nothing measured yet. placemat moves the stack by accident today: the stock slot lacks the data method's six to eight variables, `PLACEMAT_CASES` changes between batches and the binary's path carries the pad's tag, so the initial stack pointer differs by about 290 bytes between the stock slot and the others and by tens between settings and pads. Linux randomises the offset within 8 KB on x86-64.
+
+**To do**, in order:
+1. **Measure each platform's randomisation** (`scripts/probes/run.py`; done for macOS arm64: not randomised within a page, moving in 8-byte steps with the environment's size; Linux x86-64 and arm64 in CI; macOS arm64, Linux arm64 in the VM, x86 on the box): `argv`'s and a local's address over many executions per environment size.
+2. **Hold the block constant:** `PLACEMAT_STACK_PAD` per execution, `env -i` on targets; check with the data methods' `argv` log.
+3. **Record** the offset as a run covariate (reported, not adjusted).
+4. **Vary it** where it is not randomised (contrast-only stack slots, `--stack`), and run a null run with it on Lua, SQLite and Amber.
