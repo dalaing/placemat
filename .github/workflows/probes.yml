@@ -29,7 +29,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -38,10 +38,21 @@ jobs:
       - name: compilers
         run: |
           sudo env DEBIAN_FRONTEND=noninteractive apt-get update -q
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -q gcc clang
-      - name: stack offset, region lottery, pad phases (DESIGN 5.2, 5.4, 5.5)
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -q gcc clang binutils unzip
+      - name: machine, toolchain, counters; stack offset, region lottery, pad phases (DESIGN 5.2, 5.4, 5.5)
         run: python scripts/probes/run.py --runs 50 --json probes-${{ matrix.os }}.json
+      - name: sources for the layout scan (Lua 5.4.7, checksum-verified; SQLite 3.53.0)
+        run: |
+          mkdir -p src && cd src
+          curl -sSfLO https://www.lua.org/ftp/lua-5.4.7.tar.gz
+          echo "9fbf5e28ef86c69858f6d3d34eccc32e911c1a28b4120ff3e84aaa70cfbf1e30  lua-5.4.7.tar.gz" | sha256sum -c -
+          tar xzf lua-5.4.7.tar.gz
+          sh ../examples/sqlite/fetch.sh sqlite 3.53.0:2026
+      - name: static layout at the code axis's pads (loops across 32/64 B, JCC-erratum branches)
+        run: python scripts/probes/layout.py --lua src/lua-5.4.7/src --sqlite src/sqlite/3.53.0 --json layout-${{ matrix.os }}.json
       - uses: actions/upload-artifact@v7
         with:
           name: probes-${{ matrix.os }}
-          path: probes-${{ matrix.os }}.json
+          path: |
+            probes-${{ matrix.os }}.json
+            layout-${{ matrix.os }}.json

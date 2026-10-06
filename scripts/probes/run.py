@@ -11,6 +11,12 @@ on shared CI machines.
   bases repeat, at what alignment, in how many populations (the region lottery, DESIGN 5.4)?
 - pads: for each C compiler found, which phases mod 16 and mod 64 placemat's code-axis pads actually move
   the next function by, at -O2 (DESIGN 5.2).
+- machine: the CPU (vendor, model, microcode), cache geometry, transparent huge pages and ASLR settings.
+- toolchain: each compiler's alignment of functions and loops at -O2 (from its assembly), whether it adds
+  endbr64/bti landing pads, and how the linker lays out the segments (separate code or not).
+- pmu: which hardware counters a process may count on itself (perf_event_open): the generic ones, and
+  the front-end events that show code placement without timing it (Intel: uops from the decoded-uop cache
+  against the legacy decoders, 4K aliasing; AMD: op-cache hits and misses).
 
 Writes Markdown to stdout (and to $GITHUB_STEP_SUMMARY when set) and, with --json, the raw summaries."""
 from __future__ import annotations
@@ -116,9 +122,106 @@ def pads(tmp: Path) -> dict:
     return out
 
 
+def _read(p: str) -> str:
+    try:
+        return Path(p).read_text().strip()
+    except OSError:
+        return ""
+
+
+def machine() -> dict:
+    out = {"cpus": os.cpu_count()}
+    info = _read("/proc/cpuinfo")
+    for k in ("vendor_id", "model name", "cpu family", "model", "stepping", "microcode", "CPU implementer",
+              "CPU part"):
+        m = re.search(rf"^{re.escape(k)}\s*:\s*(.*)$", info, re.M)
+        if m:
+            out[k] = m.group(1)
+    if not info and shutil.which("sysctl"):
+        out["model name"] = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True,
+                                           text=True).stdout.strip()
+    caches = []
+    for d in sorted(Path("/sys/devices/system/cpu/cpu0/cache").glob("index*")):
+        caches.append({k: _read(str(d / k)) for k in ("level", "type", "size", "ways_of_associativity",
+                                                      "coherency_line_size", "number_of_sets")})
+    out["caches"] = caches
+    out["thp"] = _read("/sys/kernel/mm/transparent_hugepage/enabled")
+    out["aslr"] = _read("/proc/sys/kernel/randomize_va_space")
+    out["perf_event_paranoid"] = _read("/proc/sys/kernel/perf_event_paranoid")
+    out["pmus"] = sorted(p.name for p in Path("/sys/bus/event_source/devices").glob("*")) \
+        if Path("/sys/bus/event_source/devices").exists() else []
+    return out
+
+
+ALIGN_SRC = ("long sum(const long *x, long n) { long s = 0; for (long i = 0; i < n; i++) s += x[i] * 3 + (s >> 7);"
+             " return s; }\nint main(int c, char **v) { (void)v; return (int)sum(0, c - 1); }\n")
+
+
+def toolchain(tmp: Path) -> dict:
+    out = {}
+    src = tmp / "align.c"
+    src.write_text(ALIGN_SRC)
+    for cc in compilers():
+        asm = subprocess.run([cc, "-O2", "-S", "-o", "-", str(src)], capture_output=True, text=True).stdout
+        aligns = collections.Counter(l.strip() for l in asm.splitlines() if l.strip().startswith((".p2align", ".align", ".balign")))
+        exe = tmp / "align"
+        subprocess.run([cc, "-O2", "-o", str(exe), str(src)], capture_output=True)
+        lands = ""
+        if shutil.which("objdump") and exe.exists():
+            dis = subprocess.run(["objdump", "-d", str(exe)], capture_output=True, text=True).stdout
+            lands = ",".join(k for k in ("endbr64", "bti", "paciasp") if k in dis)
+        loads = ""
+        if shutil.which("readelf") and exe.exists():
+            ph = subprocess.run(["readelf", "-lW", str(exe)], capture_output=True, text=True).stdout
+            loads = " ".join(l.split()[6] for l in ph.splitlines() if l.strip().startswith("LOAD") and len(l.split()) > 6)
+        gcc_opts = ""
+        if "gcc" in subprocess.run([cc, "--version"], capture_output=True, text=True).stdout.lower() \
+                and "clang" not in subprocess.run([cc, "--version"], capture_output=True, text=True).stdout.lower():
+            q = subprocess.run([cc, "-O2", "-Q", "--help=optimizers"], capture_output=True, text=True).stdout
+            gcc_opts = " ".join(" ".join(l.split()) for l in q.splitlines() if "-falign-" in l)
+        out[cc] = {"alignment_directives": dict(aligns), "landing_pads": lands or "none",
+                   "load_segments": loads, "gcc_align_options": gcc_opts}
+    ld = subprocess.run(["ld", "--version"], capture_output=True, text=True).stdout.splitlines() if shutil.which("ld") else []
+    out["ld"] = ld[0] if ld else ""
+    return out
+
+
+# (name, type, config): type 0 = generic hardware event, 4 = raw. Intel raw config: event | umask << 8;
+# AMD: event bits 7:0, umask << 8, event bits 11:8 << 32.
+GENERIC = [("cycles", 0, 0), ("instructions", 0, 1), ("cache_misses", 0, 3), ("branch_misses", 0, 5)]
+INTEL = [("idq_dsb_uops", 4, 0x0879), ("idq_mite_uops", 4, 0x0479), ("ld_blocks_partial_address_alias", 4, 0x0107)]
+AMD = [("op_cache_hit", 4, (0x2 << 32) | (0x03 << 8) | 0x8F), ("op_cache_miss", 4, (0x2 << 32) | (0x04 << 8) | 0x8F),
+       ("uops_from_decoder", 4, 0x01AA), ("uops_from_op_cache", 4, 0x02AA)]
+
+
+def pmu(exe: Path, vendor: str) -> dict:
+    ev = GENERIC + (INTEL if "Intel" in vendor else AMD if "AMD" in vendor else [])
+    r = subprocess.run([str(exe)] + [f"{n}={t}:{c:x}" for n, t, c in ev], capture_output=True, text=True).stdout
+    out = {}
+    for l in r.splitlines():
+        f = l.split()
+        if f == ["unsupported"]:
+            return {"unsupported": True}
+        out[f[0]] = f"error {f[2]}" if f[1] == "error" else int(f[1])
+    return out
+
+
 def markdown(r: dict) -> str:
-    st, rg, pd = r["stack"], r["region"], r["pads"]
+    st, rg, pd, mc = r["stack"], r["region"], r["pads"], r["machine_facts"]
+    cpu = mc.get("model name") or f"{mc.get('CPU implementer', '?')}/{mc.get('CPU part', '?')}"
     L = [f"## placemat address probes: {r['system']} {r['machine']}", "",
+         f"**Machine:** {cpu} ({mc.get('vendor_id', '')} family {mc.get('cpu family', '?')} model {mc.get('model', '?')}, "
+         f"microcode {mc.get('microcode', '?')}), {mc.get('cpus')} CPUs; caches "
+         + ", ".join(f"L{c['level']} {c['type']} {c['size']} {c['ways_of_associativity']}-way" for c in mc.get("caches", []))
+         + f"; THP `{mc.get('thp', '')}`; ASLR {mc.get('aslr', '')}; perf_event_paranoid {mc.get('perf_event_paranoid', '')}; "
+         f"PMUs {mc.get('pmus', [])}.", "",
+         "**Counters** (counted on the process itself): " + ", ".join(f"{k} {v}" for k, v in r["pmu"].items()), "",
+         "**Toolchain:** " + str(r["toolchain"].get("ld", "")), ""]
+    for cc, x in r["toolchain"].items():
+        if cc != "ld":
+            L.append(f"- `{cc}`: alignment {x['alignment_directives']}; landing pads {x['landing_pads']}; "
+                     f"LOAD segments {x['load_segments'] or '-'}" + (f"; {x['gcc_align_options']}" if x['gcc_align_options'] else ""))
+    L += ["",
          f"**Stack** ({st['runs']} executions per environment size, {len(st['per_size'])} sizes): "
          f"argv's offset mod 4 KB took {st['jitter_mod4k']['min']}-{st['jitter_mod4k']['max']} distinct values "
          f"per size, so it is {'randomised within a page' if st['randomised_within_page'] else 'not randomised within a page'}; "
@@ -147,7 +250,10 @@ def main() -> int:
         r = {"system": platform.system(), "machine": platform.machine(), "release": platform.release(),
              "stack": stack(build(cc, HERE / "stackprobe.c", t / "stackprobe"), a.runs),
              "region": region(build(cc, HERE / "regionprobe.c", t / "regionprobe"), 4 * a.runs),
-             "pads": pads(t)}
+             "pads": pads(t),
+             "machine_facts": machine(),
+             "toolchain": toolchain(t)}
+        r["pmu"] = pmu(build(cc, HERE / "pmuprobe.c", t / "pmuprobe"), r["machine_facts"].get("vendor_id", ""))
     md = markdown(r)
     print(md)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
