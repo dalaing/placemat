@@ -33,6 +33,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(REPO))
+sys.path.insert(0, str(HERE))
 
 ARMS = [("malloc", None), ("s4416", 4416), ("s4608", 4608), ("s8192", 8192), ("s8256", 8256),
         ("s16384", 16384), ("s16448", 16448)]
@@ -87,7 +88,7 @@ def analyse(runs: list[dict]) -> dict:
 
 
 def markdown(r: dict) -> str:
-    L = [f"## SQLite 3.53.0 page strides against malloc: {r['machine']}, `{r['cc']}` ({r['rounds']} rounds, arms "
+    L = [f"## SQLite 3.53.0 page strides against malloc: {r['machine']}, {r.get('cpu', '?')}, `{r['cc']}` ({r['rounds']} rounds, arms "
          "in random order per round)", ""]
     if r.get("probe"):
         sp = [x["spread"] for x in r["probe"]]
@@ -126,7 +127,8 @@ def main() -> int:
             rnd.shuffle(order)
             for name in order:
                 runs.append({"round": rd, "arm": name, "times": run(exes[name])})
-    r = {"machine": platform.machine(), "cc": cc, "rounds": a.rounds, "probe": probe, "analysis": analyse(runs),
+    from run import cpu_name
+    r = {"machine": platform.machine(), "cpu": cpu_name(), "cc": cc, "rounds": a.rounds, "probe": probe, "analysis": analyse(runs),
          "runs": runs}
     md = markdown(r)
     print(md)

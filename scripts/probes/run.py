@@ -208,6 +208,12 @@ def pmu(exe: Path, vendor: str) -> dict:
     return out
 
 
+def cpu_name() -> str:
+    """The CPU's model (hosted runners mix AMD and Intel models from run to run)."""
+    m = machine()
+    return m.get("model name") or f"arm {m.get('CPU implementer', '?')}/{m.get('CPU part', '?')}"
+
+
 def markdown(r: dict) -> str:
     st, rg, pd, mc = r["stack"], r["region"], r["pads"], r["machine_facts"]
     cpu = mc.get("model name") or f"{mc.get('CPU implementer', '?')}/{mc.get('CPU part', '?')}"

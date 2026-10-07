@@ -41,7 +41,7 @@ sys.path.insert(0, str(HERE.parents[1]))
 sys.path.insert(0, str(HERE))
 from placemat import binary as B  # noqa: E402
 from layout import compile_objects, link  # noqa: E402
-from run import build, compilers  # noqa: E402
+from run import build, compilers, cpu_name  # noqa: E402
 
 PADS = list(range(0, 64, 4))
 VARIANTS = [("", {}), ("+align64", {"lvm.c": ["-falign-functions=64"]})]
@@ -139,7 +139,7 @@ def analyse(runs: list[dict], cc: str, counted: list[str]) -> dict:
 
 
 def markdown(r: dict) -> str:
-    L = [f"## Lua fib(30) across code-axis pads: {r['machine']} ({r['rounds']} rounds, pads in random order per round)", ""]
+    L = [f"## Lua fib(30) across code-axis pads: {r['machine']}, {r.get('cpu', '?')} ({r['rounds']} rounds, pads in random order per round)", ""]
     if r.get("probe"):
         sp = [x["spread"] for x in r["probe"]]
         L += [f"Noise probe before each round: spread median {st.median(sp):.2%}, max {max(sp):.2%} "
@@ -200,7 +200,7 @@ def main() -> int:
             for (cc, p, exe, m) in order:
                 runs.append({"round": rd, "cc": cc, "pad": p, "mod64": m, **run_once(stat, exe, script, ev)})
     counted = [n for n, _, _ in ev if all(n in x for x in runs)]
-    r = {"machine": platform.machine(), "rounds": a.rounds, "counted": counted, "probe": probe,
+    r = {"machine": platform.machine(), "cpu": cpu_name(), "rounds": a.rounds, "counted": counted, "probe": probe,
          "analysis": {cc: analyse(runs, cc, counted) for cc in sorted({x["cc"] for x in runs})}, "runs": runs}
     md = markdown(r)
     print(md)

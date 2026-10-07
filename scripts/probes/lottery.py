@@ -28,7 +28,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from counters import spearman  # noqa: E402
-from run import build, compilers  # noqa: E402
+from run import build, compilers, cpu_name  # noqa: E402
 
 
 def perm_p(x: list[float], y: list[float], perms: int = 2000, seed: int = 1) -> float:
@@ -68,7 +68,7 @@ def main() -> int:
     stt = [x["stack_ns"] for x in rows]
     mode = collections.Counter(base).most_common(1)[0]
     noise = {k: st.median(abs(v - st.median(vs)) for v in vs) / st.median(vs) for k, vs in (("window", win), ("stack", stt))}
-    r = {"machine": platform.machine(), "system": platform.system(), "runs": a.runs,
+    r = {"machine": platform.machine(), "system": platform.system(), "cpu": cpu_name(), "runs": a.runs,
          "noise": noise, "base_mode": [hex(mode[0]), mode[1]],
          "window_vs_base": {"spearman": spearman(base, win), "p": perm_p(base, win)},
          "window_by_page_mod8": classes([(b >> 21) % 8 for b in base], win),
@@ -90,7 +90,7 @@ def main() -> int:
 def markdown(r: dict) -> str:
     def cl(d):
         return ", ".join(f"{k}: {v:+.2%} (n={n})" for k, (v, n) in d.items()) or "-"
-    L = [f"## Region lottery and stack offset against speed: {r['system']} {r['machine']} ({r['runs']} executions)", "",
+    L = [f"## Region lottery and stack offset against speed: {r['system']} {r['machine']}, {r.get('cpu', '?')} ({r['runs']} executions)", "",
          f"Run-to-run noise (MAD/median): window kernel {r['noise']['window']:.2%}, stack kernel {r['noise']['stack']:.2%}. "
          f"Most common region base {r['base_mode'][0]} ({r['base_mode'][1]} of {r['runs']}).", "",
          f"- window time against the region base: Spearman {r['window_vs_base']['spearman']:+.2f} (p {r['window_vs_base']['p']:.3f}); "
