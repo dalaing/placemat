@@ -1,0 +1,68 @@
+# placemat on Lua, Linux arm64 (the Lima VM `placemat` on the Mac; P010's Linux pass). MIT; no Lua
+# source here. The build is ../build.py and the host ../luabench.c with ../bench/*.lua, unchanged (they
+# build on Linux: -DLUA_USE_LINUX, -ldl); the compiler is clang (as on the Mac) through LUA_CC.
+# See SURVEY.md (this directory) and ../SURVEY.md.
+#
+# placemat runs on the Mac (its lock and noise probe gate the timing; the VM's vCPUs are the Mac's
+# cores) and builds and runs in the VM through [target]. The VM writes only under
+# ../placemat-work:
+#
+#   W=../placemat-work
+#   PYTHONPATH=<placemat> python3.12 -m placemat survey --config examples/lua/linux/placemat.toml \
+#       --arm base=$W/lua/lua-5.4.7 --arm new=$W/lua/lua-5.4.7 \
+#       --work $W/linux/lua/work --out $W/linux/lua/runs --name null-547
+
+[project]
+name = "lua-linux"
+root = "."
+
+[build]
+command = ["python3", "{config_dir}/../build.py"]
+binary = "luabench"
+inputs = ["src/*", "placemat-cflags"]
+env = {LUA_CC = "clang"}        # Ubuntu clang 21, GNU ld 2.46; 4-byte function alignment on arm64, as Apple clang
+
+[target]
+prefix = ["limactl", "shell", "placemat", "--"]
+tmp = "{config_dir}/../../../../placemat-work/linux/tmp"
+
+[run]
+env = {}
+timeout = 600
+memory_mb = 0                   # the cap would watch limactl's client on the Mac, not the benchmark
+rounds = 7
+
+[machine]
+lock = ["python3", "{config_dir}/../../../../amber/pbt/quiet.py", "--exclusive", "--max-load", "0", "--", "python3", "-c", "import sys; print('held', flush=True); sys.stdin.read()"]
+shared_lock = ["python3", "{config_dir}/../../../../amber/pbt/quiet.py", "--shared", "--", "python3", "-c", "import sys; print('held', flush=True); sys.stdin.read()"]
+max_noise = 0.10
+wait = 2700
+boundary = 4096
+line = 64
+
+[data]
+# As on the Mac: hooked builds create every lua_State with lua_newstate(placemat_lua_alloc)
+method = "hook"
+vary = "both"
+step_mode = "hashed"
+unit = 64
+colour_span = 16384             # as on the Mac (four 4 KB pages here)
+step_span = 16384               # the M2's L1D set stride: the VM runs on the same cores
+min = 65536
+covariate = "khash"
+stock_placement = false
+
+[stats]
+threshold = 0.03
+threshold_fast = 0.10
+fast_us = 5000
+
+[[suite]]
+name = "lua"
+format = "lines"
+command = ["{binary}", "{config_dir}/../bench"]
+cwd = "{config_dir}/.."
+series = true
+cases = ["fib", "loop_int", "loop_float", "str_concat", "str_format", "str_pattern", "tbl_array", "tbl_sort",
+         "tbl_hash", "closures", "methods", "json", "coroutines", "array_stream", "nbody", "spectral",
+         "sieve", "vararg"]

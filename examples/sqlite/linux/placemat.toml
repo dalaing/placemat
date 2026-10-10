@@ -1,0 +1,71 @@
+# placemat configuration for SQLite on Linux arm64 (the Lima VM `placemat` on the Mac; P010's Linux
+# pass). MIT; no SQLite source here. See ../README.md and SURVEY.md (this directory).
+#
+# placemat runs on the Mac (its machine lock and noise probe gate the timing, which shares the Mac's
+# CPUs) and runs builds and benchmarks in the VM through [target]. Everything the VM writes must be
+# under ../placemat-work (the VM's only writable mount, at the same path):
+#
+#   W=../placemat-work
+#   PYTHONPATH=<placemat> python3.12 -m placemat survey --config examples/sqlite/linux/placemat.toml \
+#       --arm base=$W/sqlite/3.53.0 --arm new=$W/sqlite/3.53.0 --cases-file examples/sqlite/cases.txt \
+#       --work $W/linux/sqlite/work --out $W/linux/sqlite/runs --name null-3.53
+
+[project]
+name = "sqlite-linux"
+root = "."                     # arms are amalgamation directories
+
+[build]
+command = ["python3", "{config_dir}/build.py"]
+binary = "sqlbench"
+inputs = ["sqlite3.c", "sqlite3.h"]
+# clang, as on the Mac (Apple clang 17 there, Ubuntu clang 21 here; both 4-byte function alignment on
+# arm64, so pads move SQLite in 4-byte steps as on the Mac), GNU ld 2.46
+env = {SQLBENCH_CC = "clang"}
+
+[target]
+prefix = ["limactl", "shell", "placemat", "--"]
+tmp = "{config_dir}/../../../../placemat-work/linux/tmp"
+
+[run]
+env = {}
+timeout = 600
+memory_mb = 0                  # the cap would watch limactl's client on the Mac, not the benchmark
+rounds = 7
+
+[machine]
+# As ../placemat.toml: the Mac's machine-wide lock and noise probe (the VM's vCPUs are the Mac's cores)
+lock = ["python3", "{config_dir}/../../../../amber/pbt/quiet.py", "--exclusive", "--max-load", "0", "--", "python3", "-c", "import sys; print('held', flush=True); sys.stdin.read()"]
+shared_lock = ["python3", "{config_dir}/../../../../amber/pbt/quiet.py", "--shared", "--", "python3", "-c", "import sys; print('held', flush=True); sys.stdin.read()"]
+max_noise = 0.10
+wait = 2700
+boundary = 4096
+line = 64
+
+[data]
+# placemat's colouring allocator installed by sqlbench.c through sqlite3_config(SQLITE_CONFIG_MALLOC)
+# in hooked builds, as on the Mac (on Linux the interposer would see SQLite's heap, since mem1.c calls
+# malloc there, but the interposer is built on the Mac and cannot run on a target).
+method = "allocator"
+vary = "both"
+step_mode = "hashed"
+unit = 64
+colour_span = 16384            # as on the Mac (four 4 KB pages here)
+step_span = 16384              # the M2's L1D set stride: the VM runs on the same cores
+min = 32768
+covariate = "khash"
+stock_placement = false
+
+[stats]
+threshold = 0.03
+threshold_fast = 0.10
+fast_us = 5000
+
+[[suite]]
+name = "sqlbench"
+format = "lines"
+command = ["{binary}"]
+series = false
+cases = ["ins_plain", "ins_ipk", "ins_idx_random", "ins_3idx", "scan_between", "scan_like", "sort_text",
+         "sort_limit", "group_by", "window_fn", "create_index", "idx_between", "idx_text_between", "ipk_lookup",
+         "textpk_lookup", "upd_between", "upd_rows", "del_rows", "delete_refill", "join4", "subquery",
+         "cte_mandel", "printf_round", "json_query", "integrity"]

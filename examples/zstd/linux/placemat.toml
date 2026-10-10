@@ -1,0 +1,64 @@
+# placemat on zstd, Linux arm64 (the Lima VM `placemat` on the Mac; P010's Linux pass). MIT.
+# The build is ../build.py and the harness ../zbench.c, unchanged (both work on Linux); the compiler is
+# clang (as on the Mac) through ZB_CC. See SURVEY.md (this directory) and ../README.md.
+#
+# placemat runs on the Mac (its lock and noise probe gate the timing; the VM's vCPUs are the Mac's
+# cores) and builds and runs in the VM through [target]. The VM writes only under
+# ../placemat-work, so --work, --out and [target] tmp are there:
+#
+#   W=../placemat-work
+#   PYTHONPATH=<placemat> python3.12 -m placemat survey --config examples/zstd/linux/placemat.toml \
+#       --arm base=git:v1.5.7 --arm new=git:v1.5.7 --cases c1-text,... \
+#       --work $W/linux/zstd/work --out $W/linux/zstd/runs --name null
+
+[project]
+name = "zstd-linux"
+root = "../../../../placemat-work/zstd/src"   # a zstd clone in placemat-work, next to this repository
+
+[build]
+command = ["python3", "{config_dir}/../build.py"]
+binary = "zbench"
+inputs = ["lib/*/*.c", "lib/*/*.h", "lib/*.h"]
+env = {ZB_CC = "clang"}         # Ubuntu clang 21, GNU ld 2.46; 4-byte function alignment on arm64, as Apple clang
+
+[target]
+prefix = ["limactl", "shell", "placemat", "--"]
+tmp = "{config_dir}/../../../../placemat-work/linux/tmp"
+
+[run]
+env = {}
+timeout = 300
+memory_mb = 0                   # the cap would watch limactl's client on the Mac, not the benchmark
+rounds = 7
+
+[machine]
+lock = ["python3", "{config_dir}/../../../../amber/pbt/quiet.py", "--exclusive", "--max-load", "0", "--", "python3", "-c", "import sys; print('held', flush=True); sys.stdin.read()"]
+shared_lock = ["python3", "{config_dir}/../../../../amber/pbt/quiet.py", "--shared", "--", "python3", "-c", "import sys; print('held', flush=True); sys.stdin.read()"]
+max_noise = 0.10
+wait = 2700
+boundary = 4096
+line = 64
+
+[data]
+# As on the Mac: placemat's colouring allocator through ZSTD_customMem (../README.md)
+method = "allocator"
+vary = "both"
+step_mode = "hashed"
+unit = 64
+colour_span = 16384             # as on the Mac (four 4 KB pages here)
+step_span = 16384               # the M2's L1D set stride: the VM runs on the same cores
+min = 65536
+covariate = "khash"
+stock_placement = false
+
+[stats]
+threshold = 0.03
+threshold_fast = 0.10
+fast_us = 5000
+
+[[suite]]
+name = "zbench"
+format = "lines"
+command = ["{binary}"]
+cases = ["c1-text", "c3-text", "c6-text", "c12-text", "c19-text", "cneg5-text", "c1-rec", "c3-rec", "c3-rand",
+         "cs3-text", "d1-text", "d3-text", "d12-text", "d3-rec", "d3-rand", "ds3-text"]

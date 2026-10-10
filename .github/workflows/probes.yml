@@ -1,0 +1,72 @@
+# The platform probes (scripts/probes/run.py): the initial stack offset, where large mappings land, and
+# which phases code pads move code by, on Linux x86-64 and arm64. They measure the platform, not placemat's
+# code, so they run weekly (to notice a new runner kernel or compiler), on demand, and when the probes or
+# the pad source change. See scripts/README.md, "CI".
+name: probes
+
+on:
+  push:
+    paths:
+      - "scripts/probes/**"
+      - "placemat/build.py"
+      - ".github/workflows/probes.yml"
+  schedule:
+    - cron: "41 3 * * 1"     # weekly, Monday 03:41 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  probes:
+    name: address probes (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: compilers
+        run: |
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get update -q
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -q gcc clang binutils unzip
+      - name: machine, toolchain, counters; stack offset, region lottery, pad phases (DESIGN 5.2, 5.4, 5.5)
+        run: python scripts/probes/run.py --runs 50 --json probes-${{ matrix.os }}.json
+      - name: counters with perf_event_paranoid lowered (the default, 4, refuses every counter)
+        run: |
+          sudo sysctl -w kernel.perf_event_paranoid=1
+          cc -O2 -o pmuprobe scripts/probes/pmuprobe.c
+          ./pmuprobe cycles=0:0 instructions=0:1 cache_misses=0:3 branch_misses=0:5 | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: sources for the layout scan (Lua 5.4.7, checksum-verified; SQLite 3.53.0)
+        run: |
+          mkdir -p src && cd src
+          curl -sSfLO https://www.lua.org/ftp/lua-5.4.7.tar.gz
+          echo "9fbf5e28ef86c69858f6d3d34eccc32e911c1a28b4120ff3e84aaa70cfbf1e30  lua-5.4.7.tar.gz" | sha256sum -c -
+          tar xzf lua-5.4.7.tar.gz
+          sh ../examples/sqlite/fetch.sh sqlite 3.53.0:2026
+      - name: static layout at the code axis's pads (loops across 32/64 B, JCC-erratum branches)
+        run: python scripts/probes/layout.py --lua src/lua-5.4.7/src --sqlite src/sqlite/3.53.0 --json layout-${{ matrix.os }}.json
+      - name: "Lua across code-axis pads: timings in rounds, and hardware events where the runner can count"
+        run: python scripts/probes/counters.py --lua src/lua-5.4.7/src --rounds 7 --json counters-${{ matrix.os }}.json
+      - name: "SQLite page strides against malloc, timed in rounds"
+        run: python scripts/probes/sqlite_sweep.py --sqlite src/sqlite/3.53.0 --rounds 7 --json sweep-${{ matrix.os }}.json
+      - name: "region lottery and stack offset against speed"
+        run: python scripts/probes/lottery.py --runs 200 --json lottery-${{ matrix.os }}.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: probes-${{ matrix.os }}
+          path: |
+            probes-${{ matrix.os }}.json
+            layout-${{ matrix.os }}.json
+            counters-${{ matrix.os }}.json
+            sweep-${{ matrix.os }}.json
+            lottery-${{ matrix.os }}.json

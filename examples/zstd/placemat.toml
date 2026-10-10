@@ -1,0 +1,64 @@
+# placemat on zstd (P010): zbench.c (this directory) over a static libzstd built from the arm's tree.
+#
+#   PYTHONPATH=<placemat> python3.12 -m placemat run --config examples/zstd/placemat.toml \
+#       --arm base=git:v1.5.6 --arm new=git:v1.5.7 --cases c1-text,d3-text,... (the list below) \
+#       --work ../placemat-work/zstd/work --out ../placemat-work/zstd/runs
+#
+# The project root is a zstd clone outside the repository (git:<rev> arms are exported from it).
+# Builds are cached by the arm's tree, the build command and env, this directory's .py/.c files and
+# placemat's data sources; not by platform, so use one --work directory per platform.
+
+[project]
+name = "zstd"
+root = "../../../placemat-work/zstd/src"   # a zstd clone in placemat-work, next to this repository
+
+[build]
+command = ["python3", "{config_dir}/build.py"]
+binary = "zbench"
+inputs = ["lib/*/*.c", "lib/*/*.h", "lib/*.h"]
+
+[run]
+env = {}
+timeout = 300
+memory_mb = 1024
+rounds = 7
+
+[machine]
+# The machine-wide lock shared with the Amber timing work (exclusive: timing; shared: builds). placemat
+# waits for a quiet machine itself (max_noise), so quiet.py's load settle is skipped (--max-load 0).
+lock = ["python3", "{config_dir}/../../../amber/pbt/quiet.py", "--exclusive", "--max-load", "0", "--", "python3", "-c", "import sys; print('held', flush=True); sys.stdin.read()"]
+shared_lock = ["python3", "{config_dir}/../../../amber/pbt/quiet.py", "--shared", "--", "python3", "-c", "import sys; print('held', flush=True); sys.stdin.read()"]
+max_noise = 0.10           # wait (up to `wait` s) for placemat's noise probe spread to be at most 10%
+wait = 2700
+boundary = 4096
+line = 64
+
+[data]
+# Colouring through zstd's pluggable allocator: hooked builds (-DPLACEMAT_HOOK) create every context
+# with ZSTD_customMem over placemat_alloc, and allocate the harness's buffers with placemat_malloc
+# (README.md says why this, not the interposer). "allocator" builds like "hook" and implies the two
+# settings below; they are kept explicit. (The survey's null run used "hook" with them.)
+method = "allocator"
+vary = "both"
+step_mode = "hashed"
+unit = 64                  # zstd's workspace aligns its tables to 64 itself; malloc's 16 is all it asks of us
+colour_span = 16384        # the page size on macOS arm64
+step_span = 16384          # M2's L1D set stride (128 KB, 8-way)
+min = 65536
+# placemat_alloc takes k from the underlying malloc's addresses (one per-process base, as the
+# interposer does), so the covariate is the hash of k values, not the region base (default for hooks)
+covariate = "khash"
+# placemat_alloc adds a header and over-allocates at every setting, so (0, off) is not the stock placement
+stock_placement = false
+
+[stats]
+threshold = 0.03
+threshold_fast = 0.10
+fast_us = 5000
+
+[[suite]]
+name = "zbench"
+format = "lines"
+command = ["{binary}"]
+cases = ["c1-text", "c3-text", "c6-text", "c12-text", "c19-text", "cneg5-text", "c1-rec", "c3-rec", "c3-rand",
+         "cs3-text", "d1-text", "d3-text", "d12-text", "d3-rec", "d3-rand", "ds3-text"]

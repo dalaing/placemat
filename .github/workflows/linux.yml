@@ -1,0 +1,84 @@
+# Deterministic checks of placemat on Linux x86-64 and arm64 (GitHub-hosted runners): the unit tests on
+# every push and pull request; the box script end to end weekly and on demand. The platform probes are in
+# probes.yml. Nothing here is a timing measurement: hosted runners are shared VMs on varying CPUs, so
+# placement timing belongs on a quiet machine (scripts/box.sh). See scripts/README.md, "CI".
+name: linux
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "17 3 * * 1"     # weekly, Monday 03:17 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: toolchains
+        run: |
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get update -q
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -q gcc clang lld llvm binutils make
+      - name: unit tests (native ELF analysis, pinning with lld and GNU ld, the data adapters on glibc)
+        run: python -m unittest discover -s tests -t . -v
+
+  box:
+    # The box script's setup end to end (packages, sources, SQLite amalgamations from the mirror, the
+    # machine overlay from real sysfs, the tests), its queue dry-run, a tiny placemat check with the noise
+    # gate off, and Cachegrind instruction counts for SQLite's page-cache check-in. Weekly and on demand.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      W: ${{ github.workspace }}/../placemat-work
+    steps:
+      - uses: actions/checkout@v7
+      - name: setup
+        run: scripts/box.sh setup
+      - name: machine overlay
+        run: cat "$W/machine.toml"
+      - name: queue (dry run)
+        run: DRY=1 scripts/box.sh queue
+      - name: smoke run (Lua fib, one batch; timings meaningless here)
+        run: |
+          sed -i 's/^max_noise = .*/max_noise = 0.0/' "$W/machine.toml"
+          timeout 1800 env PYTHONPATH=. PLACEMAT_MACHINE="$W/machine.toml" LUA_CC=clang \
+            python3 -m placemat check --config examples/lua/placemat.toml \
+              --arm base="$W/lua/lua-5.4.7" --arm new="$W/lua/lua-5.4.7" --cases fib \
+              --work "$W/lua/work-ci" --out "$W/ci" --name smoke
+          cat "$W/ci/smoke.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Cachegrind, SQLite page-cache check-in (instruction counts; deterministic)
+        run: |
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -q valgrind
+          CASES=ipk_lookup,upd_rows,textpk_lookup,del_rows,integrity,idx_text_between,sort_text \
+            bash examples/sqlite/cachegrind.sh "$W/sqlite" "$W/cg" 0a5f27711 bf66606d4
+          { echo "## Cachegrind: 0a5f27711 → bf66606d4 (Ir per case)"; echo; echo '```'; cat "$W/cg/cg.tsv"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: collect
+        if: always()
+        run: |
+          mkdir -p box-out
+          cp "$W/machine.toml" box-out/ 2> /dev/null || true
+          cp -r "$W/ci" box-out/ 2> /dev/null || true
+          cp "$W/cg/cg.tsv" box-out/ 2> /dev/null || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: box
+          path: box-out/

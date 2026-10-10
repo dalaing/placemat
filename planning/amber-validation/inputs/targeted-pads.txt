@@ -1,0 +1,2 @@
+# Targeted code pads used in the C2-vs-main validation (d), chosen with ldesign.py culprits
+--layout-pads 1150,1200,1256,1316,3260,3304,3400,600
